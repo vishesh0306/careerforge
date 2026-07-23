@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models import Resume, User
-from app.schemas.resume import ResumeResponse
+from app.schemas.resume import ResumeContent, ResumeResponse
 from app.services.llm_client import LLMError
 from app.services.resume_parser import (
     ResumeParsingError,
@@ -11,6 +11,7 @@ from app.services.resume_parser import (
     extract_text_from_pdf,
     parse_resume_text,
 )
+from app.services.resume_renderer import render_resume_pdf
 
 router = APIRouter()
 
@@ -53,3 +54,19 @@ async def upload_resume(
     db.refresh(resume)
 
     return resume
+
+
+@router.get("/{resume_id}/pdf")
+def download_resume_pdf(resume_id: int, db: Session = Depends(get_db)) -> Response:
+    resume = db.get(Resume, resume_id)
+    if resume is None:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
+
+    content = ResumeContent.model_validate(resume.structured_content)
+    pdf_bytes = render_resume_pdf(content)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="resume_{resume_id}.pdf"'},
+    )

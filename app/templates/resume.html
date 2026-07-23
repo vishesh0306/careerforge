@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ resume.contact.name or "Resume" }}</title>
+<style>
+    @page {
+        size: A4;
+        margin: 1.8cm;
+    }
+    body {
+        font-family: "Liberation Sans", Arial, sans-serif;
+        font-size: 10.5pt;
+        line-height: 1.4;
+        color: #111111;
+    }
+    h1 {
+        font-size: 20pt;
+        margin: 0 0 4px 0;
+    }
+    .contact-line {
+        font-size: 10pt;
+        margin: 0 0 2px 0;
+    }
+    h2 {
+        font-size: 12pt;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 1px solid #333333;
+        margin: 14px 0 6px 0;
+        padding-bottom: 2px;
+    }
+    .entry {
+        margin-bottom: 8px;
+    }
+    .entry-title-line {
+        font-weight: bold;
+        margin: 0;
+    }
+    .entry-subtitle-line {
+        margin: 0 0 2px 0;
+        font-style: italic;
+    }
+    ul {
+        margin: 2px 0 0 0;
+        padding-left: 18px;
+    }
+    li {
+        margin-bottom: 2px;
+    }
+    p {
+        margin: 0 0 4px 0;
+    }
+    a {
+        color: #111111;
+        text-decoration: none;
+    }
+</style>
+</head>
+<body>
+
+<h1>{{ resume.contact.name or "" }}</h1>
+{% set contact_bits = [resume.contact.email, resume.contact.phone, resume.contact.location] | select | list %}
+{% if contact_bits %}
+<p class="contact-line">{{ contact_bits | join(" | ") }}</p>
+{% endif %}
+{% if resume.contact.links %}
+<p class="contact-line">{{ resume.contact.links | join(" | ") }}</p>
+{% endif %}
+
+{% if resume.summary %}
+<h2>Summary</h2>
+<p>{{ resume.summary }}</p>
+{% endif %}
+
+{% set has_skills = resume.skills.languages or resume.skills.frameworks or resume.skills.tools or resume.skills.cloud_devops %}
+{% if has_skills %}
+<h2>Skills</h2>
+{% if resume.skills.languages %}<p>Languages: {{ resume.skills.languages | join(", ") }}</p>{% endif %}
+{% if resume.skills.frameworks %}<p>Frameworks: {{ resume.skills.frameworks | join(", ") }}</p>{% endif %}
+{% if resume.skills.tools %}<p>Tools: {{ resume.skills.tools | join(", ") }}</p>{% endif %}
+{% if resume.skills.cloud_devops %}<p>Cloud / DevOps: {{ resume.skills.cloud_devops | join(", ") }}</p>{% endif %}
+{% endif %}
+
+{% if resume.experience %}
+<h2>Experience</h2>
+{% for job in resume.experience %}
+<div class="entry">
+    <p class="entry-title-line">{{ job.title }}{% if job.company %} &mdash; {{ job.company }}{% endif %}</p>
+    {% if job.start_date or job.end_date %}
+    <p class="entry-subtitle-line">{{ job.start_date }}{% if job.start_date or job.end_date %} &ndash; {% endif %}{{ job.end_date }}</p>
+    {% endif %}
+    {% if job.bullets %}
+    <ul>
+        {% for bullet in job.bullets %}
+        <li>{{ bullet }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if resume.projects %}
+<h2>Projects</h2>
+{% for project in resume.projects %}
+<div class="entry">
+    <p class="entry-title-line">{{ project.name }}{% if project.tech_stack %} ({{ project.tech_stack | join(", ") }}){% endif %}</p>
+    {% if project.description %}<p>{{ project.description }}</p>{% endif %}
+    {% if project.link %}<p><a href="{{ project.link }}">{{ project.link }}</a></p>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if resume.education %}
+<h2>Education</h2>
+{% for edu in resume.education %}
+<div class="entry">
+    <p class="entry-title-line">{{ edu.degree }}{% if edu.institution %}, {{ edu.institution }}{% endif %}</p>
+    {% if edu.dates %}<p class="entry-subtitle-line">{{ edu.dates }}</p>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if resume.certifications %}
+<h2>Certifications</h2>
+<ul>
+    {% for cert in resume.certifications %}
+    <li>{{ cert }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+</body>
+</html>
