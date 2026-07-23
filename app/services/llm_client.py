@@ -11,7 +11,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-flash-latest"
+DEFAULT_MODEL = "gemini-flash-lite-latest"
 DEFAULT_TIMEOUT_MS = 30_000
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
@@ -47,13 +47,14 @@ class LLMClient:
         self._timeout_ms = timeout_ms
 
     @_retry_decorator()
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(self, prompt: str, temperature: float | None = None) -> str:
         try:
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    http_options=types.HttpOptions(timeout=self._timeout_ms)
+                    http_options=types.HttpOptions(timeout=self._timeout_ms),
+                    temperature=temperature,
                 ),
             )
         except Exception as exc:
@@ -65,7 +66,7 @@ class LLMClient:
         return response.text
 
     @_retry_decorator()
-    def generate_structured(self, prompt: str, schema: Type[T]) -> T:
+    def generate_structured(self, prompt: str, schema: Type[T], temperature: float | None = None) -> T:
         """Generate JSON constrained to a Pydantic schema and return a validated instance."""
         try:
             response = self._client.models.generate_content(
@@ -75,6 +76,7 @@ class LLMClient:
                     response_mime_type="application/json",
                     response_schema=schema,
                     http_options=types.HttpOptions(timeout=self._timeout_ms),
+                    temperature=temperature,
                 ),
             )
         except Exception as exc:
