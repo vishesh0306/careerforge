@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from redis import Redis
 from sqlalchemy import text
 
+from app.api.resume_builder import router as resume_builder_router
 from app.api.resumes import router as resumes_router
 from app.core.config import settings
 from app.core.db import engine
@@ -9,6 +10,7 @@ from app.core.db import engine
 app = FastAPI(title="CareerForge")
 
 app.include_router(resumes_router, prefix="/resumes", tags=["resumes"])
+app.include_router(resume_builder_router, prefix="/resume-builder", tags=["resume-builder"])
 
 
 @app.get("/health")
