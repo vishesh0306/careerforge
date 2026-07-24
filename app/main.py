@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     await app.state.arq_pool.aclose()
 
 
-app = FastAPI(title="CareerForge", lifespan=lifespan)
+app = FastAPI(title="CareerForge", lifespan=lifespan, docs_url="/careerForge")
 
 app.include_router(resumes_router, prefix="/resumes", tags=["resumes"])
 app.include_router(resume_builder_router, prefix="/resume-builder", tags=["resume-builder"])
