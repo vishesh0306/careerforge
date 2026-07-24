@@ -6,7 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.db import get_db
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
 from app.models import PipelineRun, Resume, User
-from app.schemas.resume import ResumeContent, ResumeContentPatch
+from app.schemas.resume import ResumeContent, ResumeContentPatch, merge_resume_patch
 from app.schemas.resume_builder import BuilderStateResponse, ConfirmRequest, RespondRequest, StartRequest
 from app.services.llm_client import LLMError
 
@@ -127,12 +127,11 @@ def patch_resume_builder_draft(
             detail=f"Cannot patch draft while run is in state '{run.current_step}' (expected AWAITING_CONFIRM)",
         )
 
-    updates = body.model_dump(exclude_unset=True, exclude_none=True)
-    if not updates:
+    if not body.model_fields_set:
         raise HTTPException(status_code=400, detail="No fields provided to patch")
 
     state: BuilderState = run.context  # type: ignore[assignment]
-    merged = {**state["draft"], **updates}
+    merged = merge_resume_patch(state["draft"], body)
     try:
         ResumeContent.model_validate(merged)
     except ValidationError as exc:

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models import Resume, User
-from app.schemas.resume import ResumeContent, ResumeContentPatch, ResumeResponse
+from app.schemas.resume import ResumeContent, ResumeContentPatch, ResumeResponse, merge_resume_patch
 from app.services.llm_client import LLMError
 from app.services.resume_parser import (
     ResumeParsingError,
@@ -83,11 +83,10 @@ def patch_resume(resume_id: int, body: ResumeContentPatch, db: Session = Depends
     if resume is None:
         raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
 
-    updates = body.model_dump(exclude_unset=True, exclude_none=True)
-    if not updates:
+    if not body.model_fields_set:
         raise HTTPException(status_code=400, detail="No fields provided to patch")
 
-    merged = {**resume.structured_content, **updates}
+    merged = merge_resume_patch(resume.structured_content, body)
     try:
         ResumeContent.model_validate(merged)
     except ValidationError as exc:
