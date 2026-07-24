@@ -25,7 +25,7 @@ async def search(query: JobSearchQuery) -> list[NormalizedListing]:
         search_query = f"{search_query} in {query.location}"
 
     params = {"query": search_query, "num_pages": "1", "country": DEFAULT_COUNTRY, "date_posted": "all"}
-    if query.work_mode in ("wfh", "remote"):
+    if (query.work_mode or "").lower() in ("wfh", "remote"):
         params["remote_jobs_only"] = "true"
     employment_type = _EMPLOYMENT_TYPE_MAP.get(normalize_job_type(query.job_type))
     if employment_type:
