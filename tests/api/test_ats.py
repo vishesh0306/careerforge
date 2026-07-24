@@ -80,6 +80,29 @@ def test_score_against_jd_stores_analysis_and_returns_breakdown(resume_with_user
     session.close()
 
 
+def test_score_against_jd_accepts_raw_newlines_in_json_string(resume_with_user):
+    # Job descriptions are routinely pasted verbatim, with literal newlines, straight into the
+    # jd_text field — that's not valid strict JSON (control chars must be escaped as \n), but
+    # rejecting it would 422 every real-world request before our own validation even runs.
+    _, resume_id = resume_with_user
+    terms = JDTerms(must_have=["Python"], nice_to_have=[])
+    raw_body = (
+        '{"resume_id": ' + str(resume_id) + ', "jd_text": "Job Summary\nDesign scalable systems\nUse Python daily"}'
+    ).encode()
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms", return_value=terms),
+        patch("app.services.ats_scoring.cosine_similarity", return_value=0.8),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Good fit."),
+    ):
+        response = client.post(
+            "/ats/score-against-jd", content=raw_body, headers={"Content-Type": "application/json"}
+        )
+
+    assert response.status_code == 201
+    assert "Design scalable systems" in response.json()["jd_text"]
+
+
 def test_score_against_jd_nonexistent_resume_returns_404():
     response = client.post("/ats/score-against-jd", json={"resume_id": 99999999, "jd_text": "whatever"})
     assert response.status_code == 404

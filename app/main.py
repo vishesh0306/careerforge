@@ -11,6 +11,7 @@ from app.api.jobs import router as jobs_router
 from app.api.resume_builder import router as resume_builder_router
 from app.api.resumes import router as resumes_router
 from app.api.tailoring import router as tailoring_router
+from app.core import lenient_json  # noqa: F401 — patches Request.json() to accept raw newlines in strings
 from app.core.config import settings
 from app.core.db import engine
 
