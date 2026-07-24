@@ -7,9 +7,10 @@ from app.services.job_search.common import JobSearchQuery, NormalizedListing
 
 logger = logging.getLogger(__name__)
 
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
+JSEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
 JSEARCH_HOST = "jsearch.p.rapidapi.com"
 TIMEOUT_SECONDS = 15.0
+DEFAULT_COUNTRY = "in"  # India — matches this project's primary target user
 
 _EMPLOYMENT_TYPE_MAP = {"full_time": "FULLTIME", "intern": "INTERN", "contract": "CONTRACTOR"}
 
@@ -23,7 +24,7 @@ async def search(query: JobSearchQuery) -> list[NormalizedListing]:
     if query.location:
         search_query = f"{search_query} in {query.location}"
 
-    params = {"query": search_query, "page": "1", "num_pages": "1"}
+    params = {"query": search_query, "num_pages": "1", "country": DEFAULT_COUNTRY, "date_posted": "all"}
     if query.work_mode in ("wfh", "remote"):
         params["remote_jobs_only"] = "true"
     employment_type = _EMPLOYMENT_TYPE_MAP.get(query.job_type or "")
@@ -45,7 +46,7 @@ async def search(query: JobSearchQuery) -> list[NormalizedListing]:
         return []
 
     listings: list[NormalizedListing] = []
-    for item in data.get("data", []):
+    for item in data.get("data", {}).get("jobs", []):
         location_parts = [p for p in [item.get("job_city"), item.get("job_country")] if p]
         listings.append(
             NormalizedListing(
