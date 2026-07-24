@@ -109,6 +109,7 @@ def resume_content_to_text(resume: ResumeContent) -> str:
         *resume.skills.frameworks,
         *resume.skills.tools,
         *resume.skills.cloud_devops,
+        *resume.skills.other,
     ]
     if all_skills:
         lines.append("Skills: " + ", ".join(all_skills))
@@ -118,10 +119,8 @@ def resume_content_to_text(resume: ResumeContent) -> str:
         lines.extend(job.bullets)
 
     for project in resume.projects:
-        project_line = f"Project: {project.name}"
-        if project.description:
-            project_line += f" - {project.description}"
-        lines.append(project_line)
+        lines.append(f"Project: {project.name}")
+        lines.extend(project.bullets)
         if project.tech_stack:
             lines.append("Tech: " + ", ".join(project.tech_stack))
 
@@ -130,6 +129,9 @@ def resume_content_to_text(resume: ResumeContent) -> str:
 
     if resume.certifications:
         lines.append("Certifications: " + ", ".join(resume.certifications))
+
+    if resume.achievements:
+        lines.append("Achievements: " + ", ".join(resume.achievements))
 
     return "\n".join(lines)
 

@@ -33,6 +33,7 @@ def resume_with_user():
                 "frameworks": ["FastAPI"],
                 "tools": [],
                 "cloud_devops": [],
+                "other": ["PostgreSQL"],
             },
             "experience": [
                 {
@@ -43,9 +44,17 @@ def resume_with_user():
                     "bullets": ["Did a thing that mattered."],
                 }
             ],
-            "projects": [],
+            "projects": [
+                {
+                    "name": "Side Project",
+                    "bullets": ["Built a real-time pipeline.", "Shipped it to production."],
+                    "tech_stack": [],
+                    "link": "",
+                }
+            ],
             "education": [],
             "certifications": [],
+            "achievements": ["Winner, Some Hackathon"],
         },
         version=1,
         source="uploaded",
@@ -81,6 +90,10 @@ def test_download_pdf_returns_valid_pdf_with_extractable_text(resume_with_user, 
     assert "Test Candidate" in text
     assert "Acme Corp" in text
     assert "Did a thing that mattered." in text
+    assert "PostgreSQL" in text
+    assert "Built a real-time pipeline." in text
+    assert "Shipped it to production." in text
+    assert "Winner, Some Hackathon" in text
 
 
 def test_download_pdf_for_nonexistent_resume_returns_404():

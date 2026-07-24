@@ -73,13 +73,14 @@
 <p>{{ resume.summary }}</p>
 {% endif %}
 
-{% set has_skills = resume.skills.languages or resume.skills.frameworks or resume.skills.tools or resume.skills.cloud_devops %}
+{% set has_skills = resume.skills.languages or resume.skills.frameworks or resume.skills.tools or resume.skills.cloud_devops or resume.skills.other %}
 {% if has_skills %}
 <h2>Skills</h2>
 {% if resume.skills.languages %}<p>Languages: {{ resume.skills.languages | join(", ") }}</p>{% endif %}
 {% if resume.skills.frameworks %}<p>Frameworks: {{ resume.skills.frameworks | join(", ") }}</p>{% endif %}
 {% if resume.skills.tools %}<p>Tools: {{ resume.skills.tools | join(", ") }}</p>{% endif %}
 {% if resume.skills.cloud_devops %}<p>Cloud / DevOps: {{ resume.skills.cloud_devops | join(", ") }}</p>{% endif %}
+{% if resume.skills.other %}<p>Other: {{ resume.skills.other | join(", ") }}</p>{% endif %}
 {% endif %}
 
 {% if resume.experience %}
@@ -106,7 +107,13 @@
 {% for project in resume.projects %}
 <div class="entry">
     <p class="entry-title-line">{{ project.name }}{% if project.tech_stack %} ({{ project.tech_stack | join(", ") }}){% endif %}</p>
-    {% if project.description %}<p>{{ project.description }}</p>{% endif %}
+    {% if project.bullets %}
+    <ul>
+        {% for bullet in project.bullets %}
+        <li>{{ bullet }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
     {% if project.link %}<p><a href="{{ project.link }}">{{ project.link }}</a></p>{% endif %}
 </div>
 {% endfor %}
@@ -127,6 +134,15 @@
 <ul>
     {% for cert in resume.certifications %}
     <li>{{ cert }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if resume.achievements %}
+<h2>Achievements</h2>
+<ul>
+    {% for achievement in resume.achievements %}
+    <li>{{ achievement }}</li>
     {% endfor %}
 </ul>
 {% endif %}

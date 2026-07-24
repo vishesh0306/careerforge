@@ -17,6 +17,12 @@ class Skills(BaseModel):
     frameworks: list[str] = []
     tools: list[str] = []
     cloud_devops: list[str] = []
+    other: list[str] = Field(
+        default=[],
+        description="Skills that don't fit languages/frameworks/tools/cloud_devops — e.g. databases, "
+        "operating systems, core CS concepts, design patterns. Never drop a stated skill for lack of "
+        "a matching bucket; put it here instead.",
+    )
 
 
 class ExperienceEntry(BaseModel):
@@ -29,7 +35,11 @@ class ExperienceEntry(BaseModel):
 
 class ProjectEntry(BaseModel):
     name: str = ""
-    description: str = ""
+    bullets: list[str] = Field(
+        default=[],
+        description="Each distinct point about the project as its own bullet — do not compress multiple "
+        "points into a single sentence.",
+    )
     tech_stack: list[str] = []
     link: str = ""
 
@@ -51,6 +61,12 @@ class ResumeContent(BaseModel):
     projects: list[ProjectEntry] = []
     education: list[EducationEntry] = []
     certifications: list[str] = []
+    achievements: list[str] = Field(
+        default=[],
+        description="Awards, hackathon wins, competition rankings, notable recognitions — distinct from "
+        "certifications (credentials/courses). Extract this as its own section, don't drop it or merge "
+        "it into certifications.",
+    )
 
 
 class ResumeContentPatch(BaseModel):
@@ -58,10 +74,11 @@ class ResumeContentPatch(BaseModel):
 
     A section left out entirely (not sent at all) is untouched. `summary` and any scalar field you
     send inside `contact` overwrite the existing value. Everything else is additive: list sections
-    (`skills.*`, `experience`, `projects`, `education`, `certifications`, `contact.links`) get the
-    items you send APPENDED to what's already there — you never need to resend existing items just to
-    add one. There's no way to remove or reorder existing items, or to edit an existing experience/
-    project/education entry in place, through this endpoint — a sent entry is always a new entry.
+    (`skills.*`, `experience`, `projects`, `education`, `certifications`, `achievements`,
+    `contact.links`) get the items you send APPENDED to what's already there — you never need to
+    resend existing items just to add one. There's no way to remove or reorder existing items, or to
+    edit an existing experience/project/education entry in place, through this endpoint — a sent entry
+    is always a new entry.
     """
 
     contact: Optional[ContactInfo] = Field(
@@ -72,8 +89,8 @@ class ResumeContentPatch(BaseModel):
     summary: Optional[str] = Field(None, description="Overwrites the summary if provided.")
     skills: Optional[Skills] = Field(
         None,
-        description="Each sub-list you include (languages/frameworks/tools/cloud_devops) is additive — items "
-        "you send are appended to the existing list, not replacing it.",
+        description="Each sub-list you include (languages/frameworks/tools/cloud_devops/other) is additive — "
+        "items you send are appended to the existing list, not replacing it.",
     )
     experience: Optional[list[ExperienceEntry]] = Field(
         None, description="Entries you send are appended as new experience entries, not replacing the list."
@@ -86,6 +103,9 @@ class ResumeContentPatch(BaseModel):
     )
     certifications: Optional[list[str]] = Field(
         None, description="Certifications you send are appended to the existing list (exact duplicates skipped)."
+    )
+    achievements: Optional[list[str]] = Field(
+        None, description="Achievements you send are appended to the existing list (exact duplicates skipped)."
     )
 
 
@@ -118,7 +138,7 @@ def merge_resume_patch(existing: dict, patch: "ResumeContentPatch") -> dict:
         existing_skills = dict(existing.get("skills") or {})
         new_skills = updates["skills"]
         merged_skills = dict(existing_skills)
-        for key in ("languages", "frameworks", "tools", "cloud_devops"):
+        for key in ("languages", "frameworks", "tools", "cloud_devops", "other"):
             if key in new_skills:
                 merged_skills[key] = _append_dedupe(existing_skills.get(key, []), new_skills[key])
         merged["skills"] = merged_skills
@@ -129,6 +149,9 @@ def merge_resume_patch(existing: dict, patch: "ResumeContentPatch") -> dict:
 
     if "certifications" in updates:
         merged["certifications"] = _append_dedupe(existing.get("certifications", []), updates["certifications"])
+
+    if "achievements" in updates:
+        merged["achievements"] = _append_dedupe(existing.get("achievements", []), updates["achievements"])
 
     return merged
 

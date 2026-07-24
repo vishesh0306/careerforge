@@ -1,5 +1,5 @@
 from app.services.ats_scoring import JDTerms, compute_keyword_coverage, resume_content_to_text
-from app.schemas.resume import ContactInfo, ExperienceEntry, ResumeContent, Skills
+from app.schemas.resume import ContactInfo, ExperienceEntry, ProjectEntry, ResumeContent, Skills
 
 
 def test_term_present_does_not_false_positive_on_substring():
@@ -84,3 +84,19 @@ def test_resume_content_to_text_includes_key_sections():
     assert "Acme" in text
     assert "Shipped a thing." in text
     assert "AWS Certified" in text
+
+
+def test_resume_content_to_text_includes_skills_other_and_achievements_and_project_bullets():
+    resume = ResumeContent(
+        contact=ContactInfo(name="Jane Doe"),
+        skills=Skills(other=["MySQL", "Design Patterns"]),
+        projects=[ProjectEntry(name="Widget", bullets=["Built the thing.", "Scaled the thing."])],
+        achievements=["Winner, Some Hackathon"],
+    )
+    text = resume_content_to_text(resume)
+
+    assert "MySQL" in text
+    assert "Design Patterns" in text
+    assert "Built the thing." in text
+    assert "Scaled the thing." in text
+    assert "Winner, Some Hackathon" in text
