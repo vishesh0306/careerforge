@@ -12,7 +12,9 @@ class JobListing(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
-    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Text, not String(255) — JSearch's job_id values are long opaque base64 blobs
+    # (300+ chars) that exceeded a fixed-length column and crashed inserts.
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     company: Mapped[str | None] = mapped_column(String(255), nullable=True)
     jd_text: Mapped[str | None] = mapped_column(Text, nullable=True)

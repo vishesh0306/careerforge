@@ -67,7 +67,16 @@ def _upsert_and_resolve_ids(listings: list[NormalizedListing]) -> list[int]:
                 )
                 .on_conflict_do_nothing(index_elements=["source", "external_id"])
             )
-            session.execute(stmt)
+            try:
+                # Each insert runs in its own SAVEPOINT — one malformed listing
+                # (e.g. an oversized field from a source) must not abort the
+                # whole batch and crash the search run.
+                with session.begin_nested():
+                    session.execute(stmt)
+            except Exception as exc:
+                logger.warning(
+                    "Skipping listing %s/%s — insert failed: %s", listing.source, listing.external_id, exc
+                )
         session.commit()
 
         keys = [(listing.source, listing.external_id) for listing in listings]

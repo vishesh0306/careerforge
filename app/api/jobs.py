@@ -71,4 +71,5 @@ def get_job_search_results(run_id: int, db: Session = Depends(get_db)) -> JobSea
         current_step=run.current_step,
         total_listings_found=context.get("total_listings_found"),
         results=context.get("ranked_results", []),
+        error=context.get("error"),
     )

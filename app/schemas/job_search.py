@@ -37,3 +37,4 @@ class JobSearchResultsResponse(BaseModel):
     current_step: str
     total_listings_found: Optional[int] = None
     results: list[RankedListing] = []
+    error: Optional[str] = None
