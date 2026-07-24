@@ -20,6 +20,7 @@ FIT_COMMENT_TEMPERATURE = 0.2
 class JDTerms(BaseModel):
     must_have: list[str]
     nice_to_have: list[str]
+    min_years_required: float | None = None
 
 
 class FitComment(BaseModel):
@@ -34,6 +35,7 @@ class ATSScoreResult(BaseModel):
     nice_to_have_missing: list[str]
     semantic_similarity: float
     semantic_fit_comment: str
+    min_years_required: float | None = None
 
 
 JD_TERMS_PROMPT = """Extract the key skills, technologies, and qualifications from the job description below.
@@ -51,6 +53,11 @@ Critical: if the JD lists alternatives or groups (e.g. "Python, Go, or Java", "G
 pipelines", "relational databases (PostgreSQL or MySQL)"), split it into SEPARATE individual items — one per \
 technology — rather than one combined item. For example "Backend languages (Python, Go, Node.js, or Java)" \
 must become four separate items: "Python", "Go", "Node.js", "Java".
+
+Also extract min_years_required: the MINIMUM total years of professional experience explicitly required or \
+implied by the seniority of this role (e.g. "3-6 years" → 3, "5+ years" → 5, "Senior" with no number stated → \
+a reasonable minimum such as 5, "Junior"/"Entry-level"/no experience language at all → 0). Return it as a \
+plain number, or null only if the role's seniority truly cannot be inferred at all.
 
 Job description:
 ---
@@ -198,6 +205,7 @@ def score_resume_against_jd(resume: ResumeContent, jd_text: str) -> ATSScoreResu
         nice_to_have_missing=nice_missing,
         semantic_similarity=round(semantic_similarity, 3),
         semantic_fit_comment=comment,
+        min_years_required=terms.min_years_required,
     )
 
 

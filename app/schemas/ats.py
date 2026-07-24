@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -22,3 +24,4 @@ class ATSScoreResponse(BaseModel):
     nice_to_have_missing: list[str]
     semantic_similarity: float
     semantic_fit_comment: str
+    min_years_required: Optional[float] = None

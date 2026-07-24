@@ -3,7 +3,7 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.services.job_search.common import JobSearchQuery, NormalizedListing
+from app.services.job_search.common import JobSearchQuery, NormalizedListing, normalize_job_type
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ JSEARCH_HOST = "jsearch.p.rapidapi.com"
 TIMEOUT_SECONDS = 15.0
 DEFAULT_COUNTRY = "in"  # India — matches this project's primary target user
 
-_EMPLOYMENT_TYPE_MAP = {"full_time": "FULLTIME", "intern": "INTERN", "contract": "CONTRACTOR"}
+_EMPLOYMENT_TYPE_MAP = {"fulltime": "FULLTIME", "intern": "INTERN", "contract": "CONTRACTOR"}
 
 
 async def search(query: JobSearchQuery) -> list[NormalizedListing]:
@@ -27,7 +27,7 @@ async def search(query: JobSearchQuery) -> list[NormalizedListing]:
     params = {"query": search_query, "num_pages": "1", "country": DEFAULT_COUNTRY, "date_posted": "all"}
     if query.work_mode in ("wfh", "remote"):
         params["remote_jobs_only"] = "true"
-    employment_type = _EMPLOYMENT_TYPE_MAP.get(query.job_type or "")
+    employment_type = _EMPLOYMENT_TYPE_MAP.get(normalize_job_type(query.job_type))
     if employment_type:
         params["employment_types"] = employment_type
 

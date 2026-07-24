@@ -3,7 +3,7 @@ import logging
 import httpx
 
 from app.core.config import settings
-from app.services.job_search.common import JobSearchQuery, NormalizedListing
+from app.services.job_search.common import JobSearchQuery, NormalizedListing, normalize_job_type
 
 logger = logging.getLogger(__name__)
 
@@ -18,19 +18,33 @@ async def search(query: JobSearchQuery) -> list[NormalizedListing]:
         logger.info("Adzuna search skipped — ADZUNA_APP_ID/ADZUNA_APP_KEY not configured.")
         return []
 
+    # title_only restricts matching to the job title, not the full description —
+    # without it, a search for "Backend Developer" also matches MERN/Node/Golang
+    # postings whose description happens to mention backend work.
     params = {
         "app_id": settings.adzuna_app_id,
         "app_key": settings.adzuna_app_key,
         "results_per_page": RESULTS_PER_PAGE,
         "what": query.role,
+        "title_only": query.role,
         "content-type": "application/json",
     }
     if query.location:
         params["where"] = query.location
-    if query.job_type == "full_time":
+
+    job_type = normalize_job_type(query.job_type)
+    if job_type in ("fulltime", "permanent"):
         params["full_time"] = 1
-    elif query.job_type == "contract":
+    elif job_type == "contract":
         params["contract"] = 1
+    elif job_type in ("intern", "internship"):
+        params["what_or"] = "intern internship"
+
+    # Exclude senior-level postings by title when the candidate is early-career —
+    # otherwise a search for "Backend Developer" at 1 YOE still surfaces roles
+    # explicitly requiring 5-10+ years, which are not a realistic match.
+    if query.experience_years is not None and query.experience_years <= 2:
+        params["what_exclude"] = "senior lead principal staff architect"
 
     url = ADZUNA_URL_TEMPLATE.format(country=DEFAULT_COUNTRY)
 

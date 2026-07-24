@@ -80,9 +80,11 @@ def test_run_job_search_ranks_results_by_score():
             score=80.0, must_have_present=["Python"], must_have_missing=[], nice_to_have_present=[],
             nice_to_have_missing=[], semantic_similarity=0.8, semantic_fit_comment="great",
         )
+        # Above the MIN_SCORE_THRESHOLD floor (35) so this test exercises ranking, not
+        # the score-floor filter — that filter has its own dedicated test below.
         score_b = ATSScoreResult(
-            score=20.0, must_have_present=[], must_have_missing=["Java"], nice_to_have_present=[],
-            nice_to_have_missing=[], semantic_similarity=0.2, semantic_fit_comment="poor",
+            score=40.0, must_have_present=[], must_have_missing=["Java"], nice_to_have_present=[],
+            nice_to_have_missing=[], semantic_similarity=0.2, semantic_fit_comment="weaker",
         )
 
         with (
@@ -102,7 +104,86 @@ def test_run_job_search_ranks_results_by_score():
         results = run.context["ranked_results"]
         assert len(results) == 2
         assert results[0]["score"] == 80.0
-        assert results[1]["score"] == 20.0
+        assert results[1]["score"] == 40.0
+        session.close()
+    finally:
+        _cleanup(ids)
+
+
+def test_run_job_search_filters_out_listings_below_score_floor():
+    ids = _make_run_and_listings()
+    try:
+        score_ok = ATSScoreResult(
+            score=60.0, must_have_present=["Python"], must_have_missing=[], nice_to_have_present=[],
+            nice_to_have_missing=[], semantic_similarity=0.6, semantic_fit_comment="good",
+        )
+        score_too_low = ATSScoreResult(
+            score=20.0, must_have_present=[], must_have_missing=["Java"], nice_to_have_present=[],
+            nice_to_have_missing=[], semantic_similarity=0.2, semantic_fit_comment="wrong stack entirely",
+        )
+
+        with (
+            patch(
+                "app.workers.job_search_worker.get_or_fetch_listing_ids",
+                new=AsyncMock(return_value=ids["listing_ids"]),
+            ),
+            patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch(
+                "app.workers.job_search_worker.score_resume_against_jd",
+                side_effect=[score_ok, score_too_low],
+            ),
+        ):
+            asyncio.run(run_job_search(None, ids["run_id"]))
+
+        session = SessionLocal()
+        run = session.get(PipelineRun, ids["run_id"])
+        results = run.context["ranked_results"]
+        assert len(results) == 1
+        assert results[0]["score"] == 60.0
+        session.close()
+    finally:
+        _cleanup(ids)
+
+
+def test_run_job_search_filters_out_listings_requiring_far_more_experience():
+    ids = _make_run_and_listings()
+    session = SessionLocal()
+    run = session.get(PipelineRun, ids["run_id"])
+    run.context = {**run.context, "experience_years": 1}
+    session.commit()
+    session.close()
+
+    try:
+        score_reachable = ATSScoreResult(
+            score=60.0, must_have_present=["Python"], must_have_missing=[], nice_to_have_present=[],
+            nice_to_have_missing=[], semantic_similarity=0.6, semantic_fit_comment="good",
+            min_years_required=2.0,  # within the 2-year gap allowance for a 1 YOE candidate
+        )
+        score_senior = ATSScoreResult(
+            score=70.0, must_have_present=["Python"], must_have_missing=[], nice_to_have_present=[],
+            nice_to_have_missing=[], semantic_similarity=0.7, semantic_fit_comment="great tech match",
+            min_years_required=6.0,  # far beyond a 1 YOE candidate despite a high raw score
+        )
+
+        with (
+            patch(
+                "app.workers.job_search_worker.get_or_fetch_listing_ids",
+                new=AsyncMock(return_value=ids["listing_ids"]),
+            ),
+            patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch(
+                "app.workers.job_search_worker.score_resume_against_jd",
+                side_effect=[score_senior, score_reachable],
+            ),
+        ):
+            asyncio.run(run_job_search(None, ids["run_id"]))
+
+        session = SessionLocal()
+        run = session.get(PipelineRun, ids["run_id"])
+        results = run.context["ranked_results"]
+        assert len(results) == 1
+        assert results[0]["score"] == 60.0
+        assert results[0]["min_years_required"] == 2.0
         session.close()
     finally:
         _cleanup(ids)

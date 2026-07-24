@@ -29,6 +29,7 @@ class RankedListing(BaseModel):
     score: float
     must_have_missing: list[str]
     semantic_fit_comment: str
+    min_years_required: Optional[float] = None
 
 
 class JobSearchResultsResponse(BaseModel):
