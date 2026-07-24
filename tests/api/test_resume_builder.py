@@ -222,6 +222,43 @@ def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_
     session.close()
 
 
+def test_captured_so_far_surfaced_during_clarifying(test_user):
+    side_effect = _llm_side_effect(
+        assess_results=[
+            AssessmentResult(
+                ready_to_draft=False,
+                clarifying_question="What company did you work at?",
+                captured_so_far=["Backend engineer", "Worked on APIs"],
+            )
+        ],
+        resume_results=[],
+    )
+    with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
+        response = client.post(
+            "/resume-builder/start",
+            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["captured_so_far"] == ["Backend engineer", "Worked on APIs"]
+
+
+def test_captured_so_far_defaults_to_empty_list_when_not_returned(test_user):
+    side_effect = _llm_side_effect(
+        assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="What company?")],
+        resume_results=[],
+    )
+    with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
+        response = client.post(
+            "/resume-builder/start",
+            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["captured_so_far"] == []
+
+
 def test_start_with_emphasis_focus_steers_clarifying_question(test_user):
     side_effect = _llm_side_effect(
         assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Tell me more about Django.")],

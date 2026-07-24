@@ -41,5 +41,10 @@ class BuilderStateResponse(BaseModel):
     run_id: int
     status: str
     clarifying_question: Optional[str] = None
+    captured_so_far: list[str] = Field(
+        default_factory=list,
+        description="Concrete facts captured from the candidate so far, so you can see what's already noted "
+        "while answering clarifying questions.",
+    )
     draft: Optional[ResumeContent] = None
     resume_id: Optional[int] = None

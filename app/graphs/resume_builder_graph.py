@@ -2,7 +2,7 @@ import json
 from typing import Literal, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.resume import ResumeContent
 from app.services.llm_client import llm_client
@@ -24,11 +24,17 @@ class BuilderState(TypedDict):
     base_resume: Optional[dict]
     base_resume_id: Optional[int]
     emphasis_focus: Optional[str]
+    captured_so_far: list[str]
 
 
 class AssessmentResult(BaseModel):
     ready_to_draft: bool
     clarifying_question: str = ""
+    captured_so_far: list[str] = Field(
+        default_factory=list,
+        description="Short bullet-point facts (roles, companies, skills, achievements) captured from the "
+        "candidate so far, so they can see what's already been noted.",
+    )
 
 
 ASSESS_PROMPT = """You are a senior hiring manager and experienced technical recruiter specializing in the \
@@ -49,6 +55,9 @@ APIs" or "helped the team" are NOT enough — you need specifics.
 2. If not enough, ask exactly ONE targeted, specific clarifying question addressing the biggest gap or \
 vaguest claim so far. Reference what the candidate actually said — do not ask a generic filler question.
 3. If there is enough, set ready_to_draft to true and leave clarifying_question empty.
+4. List, in captured_so_far, the concrete facts (roles, companies, projects, skills, quantified outcomes) \
+the candidate has given you so far in this conversation — one short item per fact. This lets the candidate \
+see what's already been captured, so keep it accurate to only what they actually said.
 """
 
 BASE_RESUME_NOTE = """
@@ -150,6 +159,8 @@ def assess_node(state: BuilderState) -> BuilderState:
         transcript=_format_transcript(state),
     )
     result = llm_client.generate_structured(prompt, AssessmentResult)
+
+    state["captured_so_far"] = result.captured_so_far
 
     if result.ready_to_draft:
         state["status"] = "DRAFT_READY"

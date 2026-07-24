@@ -33,6 +33,7 @@ def _response(run: PipelineRun, state: BuilderState, resume_id: int | None = Non
         run_id=run.id,
         status=state["status"],
         clarifying_question=state.get("clarifying_question"),
+        captured_so_far=state.get("captured_so_far") or [],
         draft=draft,
         resume_id=resume_id,
     )
@@ -73,6 +74,7 @@ def start_resume_builder(body: StartRequest, db: Session = Depends(get_db)) -> B
         "base_resume": base_resume_content,
         "base_resume_id": body.base_resume_id,
         "emphasis_focus": body.emphasis_focus,
+        "captured_so_far": [],
     }
     state = _invoke_graph(state)
 
