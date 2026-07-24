@@ -1,14 +1,16 @@
 import re
+from datetime import date
 
 from pydantic import BaseModel
 
-from app.schemas.resume import ResumeContent
+from app.schemas.resume import ExperienceEntry, ResumeContent
 from app.services.embeddings import cosine_similarity
 from app.services.llm_client import llm_client
 
 # Fixed, documented weighting — keep stable so before/after score comparisons stay meaningful.
-KEYWORD_COMPONENT_WEIGHT = 0.6
-SEMANTIC_COMPONENT_WEIGHT = 0.4
+KEYWORD_COMPONENT_WEIGHT = 0.5
+SEMANTIC_COMPONENT_WEIGHT = 0.3
+EXPERIENCE_COMPONENT_WEIGHT = 0.2
 MUST_HAVE_WEIGHT = 0.7
 NICE_TO_HAVE_WEIGHT = 0.3
 
@@ -27,6 +29,10 @@ class FitComment(BaseModel):
     comment: str
 
 
+class CandidateExperience(BaseModel):
+    total_years_experience: float
+
+
 class ATSScoreResult(BaseModel):
     score: float
     must_have_present: list[str]
@@ -36,6 +42,7 @@ class ATSScoreResult(BaseModel):
     semantic_similarity: float
     semantic_fit_comment: str
     min_years_required: float | None = None
+    candidate_years_experience: float | None = None
 
 
 JD_TERMS_PROMPT = """Extract the key skills, technologies, and qualifications from the job description below.
@@ -83,6 +90,24 @@ The candidate is missing these must-have requirements: {missing}
 Write exactly ONE concise sentence giving your honest assessment of the candidate's fit for this role — \
 mention their strongest relevant match and their most significant gap, if any. Do not restate the numeric \
 score.
+"""
+
+CANDIDATE_EXPERIENCE_PROMPT = """Estimate the candidate's total years of professional work experience from the \
+work history below.
+
+Today's date: {today}
+
+Rules:
+- Sum the duration of each role. Treat "Present"/"Current" end dates as today's date above.
+- If roles overlap in time (e.g. concurrent jobs), do not double-count the overlapping period.
+- Internships and apprenticeships count as professional experience.
+- If there is no work history at all, or no dates are given, return 0.
+- Round to one decimal place.
+
+Work history:
+---
+{experience_text}
+---
 """
 
 ROLE_JD_PROMPT = """Write a realistic, representative job description for the following role, as it would \
@@ -186,6 +211,35 @@ def generate_fit_comment(resume_text: str, jd_text: str, must_missing: list[str]
     return result.comment.strip()
 
 
+def _format_experience_for_dating(experience: list[ExperienceEntry]) -> str:
+    lines = []
+    for job in experience:
+        lines.append(f"{job.title} at {job.company}: {job.start_date} to {job.end_date or 'Present'}")
+    return "\n".join(lines)
+
+
+def extract_candidate_years_experience(experience: list[ExperienceEntry]) -> float:
+    if not experience:
+        return 0.0
+    prompt = CANDIDATE_EXPERIENCE_PROMPT.format(
+        today=date.today().isoformat(), experience_text=_format_experience_for_dating(experience)
+    )
+    result = llm_client.generate_structured(prompt, CandidateExperience, temperature=EXTRACTION_TEMPERATURE)
+    return result.total_years_experience
+
+
+def compute_experience_fit(candidate_years: float | None, min_years_required: float | None) -> float:
+    """1.0 if the JD states no minimum, or the candidate meets/exceeds it; otherwise the
+    proportion of the requirement the candidate's experience covers (never negative)."""
+    if not min_years_required or min_years_required <= 0:
+        return 1.0
+    if candidate_years is None:
+        return 1.0
+    if candidate_years >= min_years_required:
+        return 1.0
+    return max(0.0, candidate_years / min_years_required)
+
+
 def score_resume_against_jd(resume: ResumeContent, jd_text: str) -> ATSScoreResult:
     resume_text = resume_content_to_text(resume)
     terms = extract_jd_terms(jd_text)
@@ -193,8 +247,14 @@ def score_resume_against_jd(resume: ResumeContent, jd_text: str) -> ATSScoreResu
         resume_text, terms
     )
     semantic_similarity = cosine_similarity(resume_text, jd_text)
+    candidate_years = extract_candidate_years_experience(resume.experience)
+    experience_fit = compute_experience_fit(candidate_years, terms.min_years_required)
 
-    combined = KEYWORD_COMPONENT_WEIGHT * keyword_score + SEMANTIC_COMPONENT_WEIGHT * semantic_similarity
+    combined = (
+        KEYWORD_COMPONENT_WEIGHT * keyword_score
+        + SEMANTIC_COMPONENT_WEIGHT * semantic_similarity
+        + EXPERIENCE_COMPONENT_WEIGHT * experience_fit
+    )
     score = round(combined * 100, 1)
 
     comment = generate_fit_comment(resume_text, jd_text, must_missing)
@@ -208,6 +268,7 @@ def score_resume_against_jd(resume: ResumeContent, jd_text: str) -> ATSScoreResu
         semantic_similarity=round(semantic_similarity, 3),
         semantic_fit_comment=comment,
         min_years_required=terms.min_years_required,
+        candidate_years_experience=candidate_years,
     )
 
 

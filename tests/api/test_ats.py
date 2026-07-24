@@ -103,6 +103,41 @@ def test_score_against_jd_accepts_raw_newlines_in_json_string(resume_with_user):
     assert "Design scalable systems" in response.json()["jd_text"]
 
 
+def test_score_against_jd_penalizes_score_for_experience_gap(resume_with_user):
+    _, resume_id = resume_with_user
+    session = SessionLocal()
+    resume = session.get(Resume, resume_id)
+    resume.structured_content = {
+        **resume.structured_content,
+        "experience": [
+            {"company": "Acme", "title": "Engineer", "start_date": "2024-01", "end_date": "Present", "bullets": []}
+        ],
+    }
+    session.commit()
+    session.close()
+
+    terms = JDTerms(must_have=["Python"], nice_to_have=[], min_years_required=5.0)
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms", return_value=terms),
+        patch("app.services.ats_scoring.cosine_similarity", return_value=1.0),
+        patch("app.services.ats_scoring.extract_candidate_years_experience", return_value=1.0),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Not enough experience."),
+    ):
+        response = client.post(
+            "/ats/score-against-jd",
+            json={"resume_id": resume_id, "jd_text": "Need Python, 5+ years experience."},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["candidate_years_experience"] == 1.0
+    assert body["min_years_required"] == 5.0
+    # Keywords and semantic similarity are perfect (1.0 each), but only 1/5 years covered —
+    # the experience component (weight 0.2) must pull the score below a perfect 100.
+    assert body["score"] < 100.0
+
+
 def test_score_against_jd_nonexistent_resume_returns_404():
     response = client.post("/ats/score-against-jd", json={"resume_id": 99999999, "jd_text": "whatever"})
     assert response.status_code == 404

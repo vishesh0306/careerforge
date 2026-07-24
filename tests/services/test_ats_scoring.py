@@ -1,4 +1,6 @@
-from app.services.ats_scoring import JDTerms, compute_keyword_coverage, resume_content_to_text
+import pytest
+
+from app.services.ats_scoring import JDTerms, compute_experience_fit, compute_keyword_coverage, resume_content_to_text
 from app.schemas.resume import ContactInfo, ExperienceEntry, ProjectEntry, ResumeContent, Skills
 
 
@@ -100,3 +102,21 @@ def test_resume_content_to_text_includes_skills_other_and_achievements_and_proje
     assert "Built the thing." in text
     assert "Scaled the thing." in text
     assert "Winner, Some Hackathon" in text
+
+
+def test_compute_experience_fit_full_credit_when_no_requirement_stated():
+    assert compute_experience_fit(candidate_years=0.5, min_years_required=None) == 1.0
+    assert compute_experience_fit(candidate_years=0.5, min_years_required=0) == 1.0
+
+
+def test_compute_experience_fit_full_credit_when_candidate_meets_or_exceeds():
+    assert compute_experience_fit(candidate_years=3.0, min_years_required=3.0) == 1.0
+    assert compute_experience_fit(candidate_years=5.0, min_years_required=3.0) == 1.0
+
+
+def test_compute_experience_fit_partial_credit_when_under_requirement():
+    assert compute_experience_fit(candidate_years=1.0, min_years_required=3.0) == pytest.approx(1 / 3)
+
+
+def test_compute_experience_fit_zero_when_no_experience_but_requirement_exists():
+    assert compute_experience_fit(candidate_years=0.0, min_years_required=3.0) == 0.0

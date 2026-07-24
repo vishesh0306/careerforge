@@ -25,3 +25,4 @@ class ATSScoreResponse(BaseModel):
     semantic_similarity: float
     semantic_fit_comment: str
     min_years_required: Optional[float] = None
+    candidate_years_experience: Optional[float] = None
