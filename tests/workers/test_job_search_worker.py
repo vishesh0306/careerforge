@@ -26,6 +26,7 @@ def _make_run_and_listings():
             "certifications": [],
         },
         version=1,
+        source="uploaded",
     )
     session.add(resume)
     session.commit()

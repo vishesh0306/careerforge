@@ -49,6 +49,7 @@ def start_tailoring(body: TailoringStartRequest, db: Session = Depends(get_db)) 
     state: TailoringState = {
         "resume_id": resume.id,
         "jd_text": body.jd_text,
+        "emphasis_focus": body.emphasis_focus,
         "original_resume": resume.structured_content,
         "original_score": {},
         "gaps": [],
@@ -116,10 +117,15 @@ def confirm_gaps(run_id: int, body: ConfirmGapsRequest, db: Session = Depends(ge
 
     tailored_content = ResumeContent.model_validate(state["tailored_resume"])
     original_resume = db.get(Resume, state["resume_id"])
+    emphasis_focus = state.get("emphasis_focus")
+    label = f"Tailored — {emphasis_focus} focus" if emphasis_focus else "Tailored resume"
     new_resume = Resume(
         user_id=original_resume.user_id,
         structured_content=tailored_content.model_dump(),
         version=original_resume.version + 1,
+        source="tailored",
+        label=label,
+        parent_resume_id=original_resume.id,
     )
     db.add(new_resume)
     db.flush()

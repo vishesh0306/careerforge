@@ -104,6 +104,8 @@ def test_full_happy_path_start_respond_confirm(test_user):
     stored = session.get(Resume, confirm_body["resume_id"])
     assert stored is not None
     assert stored.structured_content["contact"]["name"] == "Test Candidate"
+    assert stored.source == "builder"
+    assert stored.label == "Built for Backend Engineer"
     session.close()
 
 

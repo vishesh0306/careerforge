@@ -19,6 +19,7 @@ def test_create_resume_with_jsonb(db_session):
         user_id=user.id,
         structured_content={"contact": {"name": "Bob"}, "skills": {"languages": ["Python"]}},
         version=1,
+        source="uploaded",
     )
     db_session.add(resume)
     db_session.flush()
@@ -53,7 +54,7 @@ def test_create_jd_analysis(db_session):
     db_session.add(user)
     db_session.flush()
 
-    resume = Resume(user_id=user.id, structured_content={}, version=1)
+    resume = Resume(user_id=user.id, structured_content={}, version=1, source="uploaded")
     db_session.add(resume)
     db_session.flush()
 

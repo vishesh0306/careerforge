@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.resume import ResumeContent
 from app.services.ats_scoring import ATSScoreResult
@@ -9,6 +9,15 @@ from app.services.ats_scoring import ATSScoreResult
 class TailoringStartRequest(BaseModel):
     resume_id: int
     jd_text: str
+    emphasis_focus: Optional[str] = Field(
+        None,
+        description="A specific tech/skill already in your resume to foreground for this application, "
+        "e.g. 'Django'. If set, the tailored resume reorders existing bullets/skills to lead with "
+        "emphasis_focus-relevant content and de-emphasize (never delete) less relevant stacks you also "
+        "know — useful when you have multiple stacks (Django, Spring Boot, ...) and are applying to a "
+        "role centered on just one of them.",
+        examples=["Django"],
+    )
 
 
 class GapInfo(BaseModel):

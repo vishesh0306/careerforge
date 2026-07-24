@@ -106,7 +106,13 @@ def confirm_resume_builder(run_id: int, body: ConfirmRequest, db: Session = Depe
     state: BuilderState = run.context  # type: ignore[assignment]
 
     if body.approved:
-        resume = Resume(user_id=run.user_id, structured_content=state["draft"], version=1)
+        resume = Resume(
+            user_id=run.user_id,
+            structured_content=state["draft"],
+            version=1,
+            source="builder",
+            label=f"Built for {state['target_field']}",
+        )
         db.add(resume)
         state["status"] = "FINALIZED"
         _persist(run, state, db)

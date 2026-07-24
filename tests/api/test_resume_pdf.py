@@ -48,6 +48,7 @@ def resume_with_user():
             "certifications": [],
         },
         version=1,
+        source="uploaded",
     )
     session.add(resume)
     session.commit()

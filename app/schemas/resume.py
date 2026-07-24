@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -57,6 +58,9 @@ class ResumeResponse(BaseModel):
     user_id: int
     structured_content: ResumeContent
     version: int
+    source: str
+    label: Optional[str] = None
+    parent_resume_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

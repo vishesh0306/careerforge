@@ -86,3 +86,40 @@ def test_upload_valid_docx_stores_structured_resume(test_user):
     assert body["user_id"] == test_user
     assert body["structured_content"]["contact"]["name"] == "Test Person"
     assert body["version"] == 1
+    assert body["source"] == "uploaded"
+    assert body["label"] == "Uploaded resume"
+    assert body["parent_resume_id"] is None
+
+
+def test_list_resumes_returns_all_resumes_for_user(test_user):
+    fake_content = ResumeContent(contact=ContactInfo(name="Test Person"))
+
+    with patch("app.services.resume_parser.llm_client.generate_structured", return_value=fake_content):
+        with open("tests/fixtures/sample_resume.docx", "rb") as f:
+            client.post(
+                f"/resumes/upload?user_id={test_user}",
+                files={
+                    "file": (
+                        "resume.docx",
+                        f,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+            )
+
+    response = client.get(f"/resumes?user_id={test_user}")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["source"] == "uploaded"
+
+
+def test_list_resumes_nonexistent_user_returns_404():
+    response = client.get("/resumes?user_id=99999999")
+    assert response.status_code == 404
+
+
+def test_list_resumes_empty_for_user_with_no_resumes(test_user):
+    response = client.get(f"/resumes?user_id={test_user}")
+    assert response.status_code == 200
+    assert response.json() == []

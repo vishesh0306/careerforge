@@ -48,12 +48,32 @@ async def upload_resume(
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"Resume parsing service failed: {exc}") from exc
 
-    resume = Resume(user_id=user_id, structured_content=structured_content.model_dump(), version=1)
+    resume = Resume(
+        user_id=user_id,
+        structured_content=structured_content.model_dump(),
+        version=1,
+        source="uploaded",
+        label="Uploaded resume",
+    )
     db.add(resume)
     db.commit()
     db.refresh(resume)
 
     return resume
+
+
+@router.get("", response_model=list[ResumeResponse])
+def list_resumes(user_id: int, db: Session = Depends(get_db)) -> list[Resume]:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+    return (
+        db.query(Resume)
+        .filter(Resume.user_id == user_id)
+        .order_by(Resume.created_at.desc())
+        .all()
+    )
 
 
 @router.get("/{resume_id}/pdf")

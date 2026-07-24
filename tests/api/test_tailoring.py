@@ -50,7 +50,7 @@ def resume_with_user():
     session.commit()
     session.refresh(user)
 
-    resume = Resume(user_id=user.id, structured_content=BASE_RESUME, version=1)
+    resume = Resume(user_id=user.id, structured_content=BASE_RESUME, version=1, source="uploaded")
     session.add(resume)
     session.commit()
     session.refresh(resume)
@@ -151,6 +151,9 @@ def test_confirm_gaps_with_confirmed_gap_creates_new_tailored_resume(resume_with
     assert new_resume is not None
     assert new_resume.version == 2
     assert new_resume.user_id == session.get(Resume, resume_id).user_id
+    assert new_resume.source == "tailored"
+    assert new_resume.parent_resume_id == resume_id
+    assert new_resume.label == "Tailored resume"
     session.close()
 
 
@@ -169,6 +172,44 @@ def test_confirm_gaps_all_declined_short_circuits_without_llm_tailor_call(resume
     assert body["tailored_score"]["score"] == 50.0  # unchanged from original
     assert "Kubernetes" not in body["tailored_resume"]["skills"]["tools"]
     mock_tailor.assert_not_called()
+
+
+def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resume_with_user):
+    """Critical regression check: a candidate who already has the skill (no gaps to
+    confirm) but wants emphasis reordering must still trigger regeneration — this is
+    exactly the multi-stack-candidate scenario the emphasis_focus field exists for."""
+    _, resume_id = resume_with_user
+
+    with (
+        patch("app.graphs.jd_tailoring_graph.score_resume_against_jd", return_value=STRONG_SCORE),
+        patch("app.graphs.jd_tailoring_graph.generate_gap_explanations", return_value={}),
+    ):
+        start_response = client.post(
+            "/tailoring/start",
+            json={"resume_id": resume_id, "jd_text": "Need Python.", "emphasis_focus": "Django"},
+        )
+    run_id = start_response.json()["run_id"]
+    assert start_response.json()["gaps"] == []
+
+    reordered = ResumeContent.model_validate(BASE_RESUME)
+    reordered.summary = "Django-focused summary."
+
+    with (
+        patch("app.graphs.jd_tailoring_graph.tailor_resume", return_value=reordered) as mock_tailor,
+        patch("app.graphs.jd_tailoring_graph.score_resume_against_jd", return_value=STRONG_SCORE),
+    ):
+        response = client.post(f"/tailoring/{run_id}/confirm-gaps", json={"confirmations": []})
+
+    assert response.status_code == 200
+    body = response.json()
+    mock_tailor.assert_called_once()
+    assert mock_tailor.call_args.args[3] == "Django"  # emphasis_focus threaded through
+    assert body["tailored_resume"]["summary"] == "Django-focused summary."
+
+    session = SessionLocal()
+    new_resume = session.get(Resume, body["tailored_resume_id"])
+    assert new_resume.label == "Tailored — Django focus"
+    session.close()
 
 
 def test_confirm_gaps_wrong_state_returns_409(resume_with_user):

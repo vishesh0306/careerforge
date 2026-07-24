@@ -19,6 +19,7 @@ class GapItem(TypedDict):
 class TailoringState(TypedDict):
     resume_id: int
     jd_text: str
+    emphasis_focus: Optional[str]
     original_resume: dict
     original_score: dict
     gaps: list[GapItem]
@@ -68,19 +69,30 @@ Job description:
 Current resume (JSON):
 {resume_json}
 
-The candidate has confirmed they genuinely have the following additional skills/experience, with supporting \
-detail where given:
-
-{confirmed_additions}
-
-Incorporate ONLY these confirmed additions into the resume — add each to the most appropriate section (the \
-skills list, and/or as a new or updated experience bullet if specific supporting detail was given).
+{instructions}
 
 Rules:
-- Do NOT invent, add, or imply any skill or claim that is not explicitly listed above.
-- Preserve everything else about the resume that was already strong — do not remove, reword away, or weaken \
-existing content that isn't related to these additions.
+- Do NOT invent, add, or imply any skill or claim that is not explicitly supported by the confirmed additions \
+below or the candidate's existing resume content.
+- Never delete real, factual content (actual jobs, actual bullets, actual skills) — reordering and \
+de-emphasizing what's less relevant to this application is fine; erasing true experience is not.
+- Preserve everything about the resume that is already strong and not addressed by the instructions above.
 """
+
+ADDITIONS_INSTRUCTIONS = """The candidate has confirmed they genuinely have the following additional skills/\
+experience, with supporting detail where given. Incorporate ONLY these into the resume — add each to the most \
+appropriate section (the skills list, and/or as a new or updated experience bullet if detail was given):
+
+{confirmed_additions}"""
+
+EMPHASIS_INSTRUCTIONS = """The candidate knows multiple technologies/stacks and wants THIS version of their \
+resume to foreground their "{emphasis_focus}" experience specifically, since that is what this job is \
+centered on:
+- Reorder each skills list so "{emphasis_focus}"-related items appear first within their category.
+- Reorder experience bullets within each job so "{emphasis_focus}"-related bullets come first.
+- If the summary mentions multiple stacks, lead with "{emphasis_focus}".
+- Do NOT delete bullets or skills about other stacks — just move them later/lower. The candidate still wants \
+their full breadth visible, just not leading, since they apply to other kinds of roles too."""
 
 
 def generate_gap_explanations(resume_text: str, jd_text: str, missing_terms: list[str]) -> dict[str, str]:
@@ -93,18 +105,30 @@ def generate_gap_explanations(resume_text: str, jd_text: str, missing_terms: lis
     return {g.term: g.why_it_matters for g in result.gaps}
 
 
-def tailor_resume(resume: ResumeContent, jd_text: str, confirmed_gaps: list[GapItem]) -> ResumeContent:
-    additions_lines = []
-    for gap in confirmed_gaps:
-        if gap.get("detail"):
-            additions_lines.append(f"- {gap['term']}: {gap['detail']}")
-        else:
-            additions_lines.append(f"- {gap['term']} (candidate confirmed they have this; add to skills only)")
+def tailor_resume(
+    resume: ResumeContent,
+    jd_text: str,
+    confirmed_gaps: list[GapItem],
+    emphasis_focus: Optional[str] = None,
+) -> ResumeContent:
+    instruction_blocks = []
+
+    if confirmed_gaps:
+        additions_lines = []
+        for gap in confirmed_gaps:
+            if gap.get("detail"):
+                additions_lines.append(f"- {gap['term']}: {gap['detail']}")
+            else:
+                additions_lines.append(f"- {gap['term']} (candidate confirmed they have this; add to skills only)")
+        instruction_blocks.append(ADDITIONS_INSTRUCTIONS.format(confirmed_additions="\n".join(additions_lines)))
+
+    if emphasis_focus:
+        instruction_blocks.append(EMPHASIS_INSTRUCTIONS.format(emphasis_focus=emphasis_focus))
 
     prompt = TAILOR_PROMPT.format(
         jd_text=jd_text,
         resume_json=resume.model_dump_json(),
-        confirmed_additions="\n".join(additions_lines),
+        instructions="\n\n".join(instruction_blocks),
     )
     return llm_client.generate_structured(prompt, ResumeContent, temperature=0.2)
 
@@ -138,9 +162,13 @@ def score_and_review_node(state: TailoringState) -> TailoringState:
 def tailor_and_rescore_node(state: TailoringState) -> TailoringState:
     resume = ResumeContent.model_validate(state["original_resume"])
     confirmed_gaps = [g for g in state["gaps"] if g["confirmed"]]
+    emphasis_focus = state.get("emphasis_focus")
 
-    if confirmed_gaps:
-        tailored = tailor_resume(resume, state["jd_text"], confirmed_gaps)
+    # Emphasis-only requests (candidate already has the skill, just wants it foregrounded)
+    # must still trigger regeneration even with zero confirmed gaps — only skip the LLM
+    # call entirely when there is truly nothing to do.
+    if confirmed_gaps or emphasis_focus:
+        tailored = tailor_resume(resume, state["jd_text"], confirmed_gaps, emphasis_focus)
         rescore = score_resume_against_jd(tailored, state["jd_text"])
     else:
         tailored = resume
