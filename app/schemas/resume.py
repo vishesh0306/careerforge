@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContactInfo(BaseModel):
@@ -51,6 +51,29 @@ class ResumeContent(BaseModel):
     projects: list[ProjectEntry] = []
     education: list[EducationEntry] = []
     certifications: list[str] = []
+
+
+class ResumeContentPatch(BaseModel):
+    """Partial update for a resume's structured content — deterministic, no LLM involved.
+
+    Only top-level sections included in the request are replaced wholesale; any section left out
+    (not sent at all) is untouched. There is no way to partially edit within a section — send the
+    whole section (e.g. the whole `experience` list) with your changes applied.
+    """
+
+    contact: Optional[ContactInfo] = Field(None, description="Replaces the whole contact block if provided.")
+    summary: Optional[str] = Field(None, description="Replaces the summary if provided.")
+    skills: Optional[Skills] = Field(None, description="Replaces the whole skills block if provided.")
+    experience: Optional[list[ExperienceEntry]] = Field(
+        None, description="Replaces the whole experience list if provided."
+    )
+    projects: Optional[list[ProjectEntry]] = Field(None, description="Replaces the whole projects list if provided.")
+    education: Optional[list[EducationEntry]] = Field(
+        None, description="Replaces the whole education list if provided."
+    )
+    certifications: Optional[list[str]] = Field(
+        None, description="Replaces the whole certifications list if provided."
+    )
 
 
 class ResumeResponse(BaseModel):

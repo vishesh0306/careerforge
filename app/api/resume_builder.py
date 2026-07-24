@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.db import get_db
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
 from app.models import PipelineRun, Resume, User
-from app.schemas.resume import ResumeContent
+from app.schemas.resume import ResumeContent, ResumeContentPatch
 from app.schemas.resume_builder import BuilderStateResponse, ConfirmRequest, RespondRequest, StartRequest
 from app.services.llm_client import LLMError
 
@@ -22,6 +24,10 @@ def _get_run(run_id: int, db: Session) -> PipelineRun:
 
 def _persist(run: PipelineRun, state: BuilderState, db: Session) -> None:
     run.context = dict(state)
+    # JSONB columns don't auto-detect in-place mutation of the dict they hold; if a caller mutated
+    # `run.context` before reassigning it here, SQLAlchemy's dirty-check can see old == new and skip
+    # the UPDATE. Force it explicitly so edits always persist.
+    flag_modified(run, "context")
     run.current_step = state["status"]
     run.status = "completed" if state["status"] == "FINALIZED" else "awaiting_input"
     db.commit()
@@ -105,6 +111,33 @@ def respond_to_resume_builder(run_id: int, body: RespondRequest, db: Session = D
     state["messages"].append({"role": "candidate", "content": body.answer})
     state["entry_point"] = "assess"
     state = _invoke_graph(state)
+
+    _persist(run, state, db)
+    return _response(run, state)
+
+
+@router.patch("/{run_id}/draft", response_model=BuilderStateResponse)
+def patch_resume_builder_draft(
+    run_id: int, body: ResumeContentPatch, db: Session = Depends(get_db)
+) -> BuilderStateResponse:
+    run = _get_run(run_id, db)
+    if run.current_step != "AWAITING_CONFIRM":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot patch draft while run is in state '{run.current_step}' (expected AWAITING_CONFIRM)",
+        )
+
+    updates = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided to patch")
+
+    state: BuilderState = run.context  # type: ignore[assignment]
+    merged = {**state["draft"], **updates}
+    try:
+        ResumeContent.model_validate(merged)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state["draft"] = merged
 
     _persist(run, state, db)
     return _response(run, state)

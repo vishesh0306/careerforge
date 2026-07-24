@@ -123,3 +123,57 @@ def test_list_resumes_empty_for_user_with_no_resumes(test_user):
     response = client.get(f"/resumes?user_id={test_user}")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_patch_resume_replaces_only_included_sections(test_user):
+    session = SessionLocal()
+    resume = Resume(
+        user_id=test_user,
+        structured_content={
+            "contact": {"name": "Original Name", "email": "orig@example.com", "phone": "", "location": "", "links": []},
+            "summary": "Original summary.",
+            "skills": {"languages": ["Python"], "frameworks": [], "tools": [], "cloud_devops": []},
+            "experience": [],
+            "projects": [],
+            "education": [],
+            "certifications": ["AWS Certified"],
+        },
+        version=1,
+        source="uploaded",
+    )
+    session.add(resume)
+    session.commit()
+    session.refresh(resume)
+    resume_id = resume.id
+    session.close()
+
+    response = client.patch(f"/resumes/{resume_id}", json={"summary": "Patched summary."})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["structured_content"]["summary"] == "Patched summary."
+    assert body["structured_content"]["contact"]["name"] == "Original Name"
+    assert body["structured_content"]["certifications"] == ["AWS Certified"]
+
+
+def test_patch_resume_nonexistent_returns_404(test_user):
+    response = client.patch("/resumes/99999999", json={"summary": "New summary."})
+    assert response.status_code == 404
+
+
+def test_patch_resume_empty_body_returns_400(test_user):
+    session = SessionLocal()
+    resume = Resume(
+        user_id=test_user,
+        structured_content={"contact": {"name": "X", "email": "", "phone": "", "location": "", "links": []}},
+        version=1,
+        source="uploaded",
+    )
+    session.add(resume)
+    session.commit()
+    session.refresh(resume)
+    resume_id = resume.id
+    session.close()
+
+    response = client.patch(f"/resumes/{resume_id}", json={})
+    assert response.status_code == 400

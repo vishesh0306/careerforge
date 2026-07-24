@@ -316,6 +316,72 @@ def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(t
     session.close()
 
 
+def test_patch_draft_replaces_only_included_sections(test_user):
+    fake_draft = ResumeContent(
+        contact=ContactInfo(name="Test Candidate"), summary="A great engineer.", certifications=["AWS Certified"]
+    )
+
+    with patch(
+        "app.graphs.resume_builder_graph.llm_client.generate_structured",
+        side_effect=_llm_side_effect(assess_results=[AssessmentResult(ready_to_draft=True)], resume_results=[fake_draft]),
+    ):
+        start_response = client.post(
+            "/resume-builder/start",
+            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+        )
+    run_id = start_response.json()["run_id"]
+
+    patch_response = client.patch(f"/resume-builder/{run_id}/draft", json={"summary": "Manually edited summary."})
+
+    assert patch_response.status_code == 200
+    body = patch_response.json()
+    assert body["draft"]["summary"] == "Manually edited summary."
+    assert body["draft"]["contact"]["name"] == "Test Candidate"
+    assert body["draft"]["certifications"] == ["AWS Certified"]
+    assert body["status"] == "AWAITING_CONFIRM"
+
+    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    assert confirm_response.status_code == 200
+    resume_id = confirm_response.json()["resume_id"]
+
+    session = SessionLocal()
+    stored = session.get(Resume, resume_id)
+    assert stored.structured_content["summary"] == "Manually edited summary."
+    session.close()
+
+
+def test_patch_draft_rejected_when_not_awaiting_confirm(test_user):
+    side_effect = _llm_side_effect(
+        assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Which company?")],
+        resume_results=[],
+    )
+    with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
+        start_response = client.post(
+            "/resume-builder/start",
+            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+        )
+    run_id = start_response.json()["run_id"]
+
+    response = client.patch(f"/resume-builder/{run_id}/draft", json={"summary": "New summary."})
+    assert response.status_code == 409
+
+
+def test_patch_draft_empty_body_returns_400(test_user):
+    initial_draft = ResumeContent(contact=ContactInfo(name="X"))
+    with patch(
+        "app.graphs.resume_builder_graph.llm_client.generate_structured",
+        side_effect=_llm_side_effect(assess_results=[AssessmentResult(ready_to_draft=True)], resume_results=[initial_draft]),
+    ):
+        start_response = client.post(
+            "/resume-builder/start",
+            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+        )
+    run_id = start_response.json()["run_id"]
+
+    response = client.patch(f"/resume-builder/{run_id}/draft", json={})
+    assert response.status_code == 400
+
+
 def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
     initial_draft = ResumeContent(contact=ContactInfo(name=""), summary="Original summary.")
     revised_draft = ResumeContent(contact=ContactInfo(name="Now With Name"), summary="Original summary.")

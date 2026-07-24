@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models import Resume, User
-from app.schemas.resume import ResumeContent, ResumeResponse
+from app.schemas.resume import ResumeContent, ResumeContentPatch, ResumeResponse
 from app.services.llm_client import LLMError
 from app.services.resume_parser import (
     ResumeParsingError,
@@ -74,6 +75,28 @@ def list_resumes(user_id: int, db: Session = Depends(get_db)) -> list[Resume]:
         .order_by(Resume.created_at.desc())
         .all()
     )
+
+
+@router.patch("/{resume_id}", response_model=ResumeResponse)
+def patch_resume(resume_id: int, body: ResumeContentPatch, db: Session = Depends(get_db)) -> Resume:
+    resume = db.get(Resume, resume_id)
+    if resume is None:
+        raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
+
+    updates = body.model_dump(exclude_unset=True, exclude_none=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields provided to patch")
+
+    merged = {**resume.structured_content, **updates}
+    try:
+        ResumeContent.model_validate(merged)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    resume.structured_content = merged
+    db.commit()
+    db.refresh(resume)
+
+    return resume
 
 
 @router.get("/{resume_id}/pdf")
