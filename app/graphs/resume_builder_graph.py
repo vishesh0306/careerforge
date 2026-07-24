@@ -1,3 +1,4 @@
+import json
 from typing import Literal, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -20,6 +21,8 @@ class BuilderState(TypedDict):
     draft: Optional[dict]
     revision_feedback: Optional[str]
     entry_point: Literal["assess", "revise"]
+    base_resume: Optional[dict]
+    base_resume_id: Optional[int]
 
 
 class AssessmentResult(BaseModel):
@@ -34,7 +37,7 @@ Apply the standards a real hiring manager in this specific field would apply. Di
 different kinds of evidence (e.g. a backend engineer should quantify latency/scale/cost impact; a graphic \
 designer should describe creative process, tools used, and client/stakeholder outcomes) — adapt your \
 judgment and questions to what actually matters in "{target_field}".
-
+{base_resume_note}
 Conversation so far:
 {transcript}
 
@@ -45,6 +48,15 @@ APIs" or "helped the team" are NOT enough — you need specifics.
 2. If not enough, ask exactly ONE targeted, specific clarifying question addressing the biggest gap or \
 vaguest claim so far. Reference what the candidate actually said — do not ask a generic filler question.
 3. If there is enough, set ready_to_draft to true and leave clarifying_question empty.
+"""
+
+BASE_RESUME_NOTE = """
+The candidate already has an existing resume on file — do NOT ask them to re-state information already \
+present in it. Only ask about what's new, what has changed, or what they explicitly want to add or update in \
+this conversation.
+
+Existing resume (JSON):
+{base_resume_json}
 """
 
 DRAFT_PROMPT = """You are a senior hiring manager and technical recruiter specializing in "{target_field}", \
@@ -60,6 +72,26 @@ own facts — tighten the language, but do not add facts that were not given.
 
 Conversation:
 {transcript}
+"""
+
+DRAFT_PROMPT_FROM_BASE = """You are a senior hiring manager and technical recruiter specializing in \
+"{target_field}", updating a candidate's EXISTING resume based on a follow-up conversation.
+
+Existing resume (JSON) — this is the candidate's current resume:
+{base_resume_json}
+
+Conversation since then:
+{transcript}
+
+Rules:
+- Preserve everything in the existing resume that the conversation didn't address or contradict — do not \
+regenerate from scratch, and do not remove or reword content that is still accurate.
+- Incorporate new information from the conversation: new roles, updated bullets, added skills, corrections, \
+etc. — wherever the candidate gave new or updated detail.
+- If the conversation implies correcting or removing something from the existing resume (e.g. "that role \
+actually ended in 2023, not 2024"), apply that correction.
+- Use ONLY information explicitly provided — either already in the existing resume, or stated in this \
+conversation. Do NOT invent companies, dates, metrics, or skills that were never stated.
 """
 
 REVISE_PROMPT = """You are a senior hiring manager and technical recruiter specializing in "{target_field}". \
@@ -86,7 +118,13 @@ def _format_transcript(state: BuilderState) -> str:
 
 
 def assess_node(state: BuilderState) -> BuilderState:
-    prompt = ASSESS_PROMPT.format(target_field=state["target_field"], transcript=_format_transcript(state))
+    base_resume_note = ""
+    if state.get("base_resume"):
+        base_resume_note = BASE_RESUME_NOTE.format(base_resume_json=json.dumps(state["base_resume"]))
+
+    prompt = ASSESS_PROMPT.format(
+        target_field=state["target_field"], base_resume_note=base_resume_note, transcript=_format_transcript(state)
+    )
     result = llm_client.generate_structured(prompt, AssessmentResult)
 
     if result.ready_to_draft:
@@ -100,7 +138,14 @@ def assess_node(state: BuilderState) -> BuilderState:
 
 
 def draft_node(state: BuilderState) -> BuilderState:
-    prompt = DRAFT_PROMPT.format(target_field=state["target_field"], transcript=_format_transcript(state))
+    if state.get("base_resume"):
+        prompt = DRAFT_PROMPT_FROM_BASE.format(
+            target_field=state["target_field"],
+            base_resume_json=json.dumps(state["base_resume"]),
+            transcript=_format_transcript(state),
+        )
+    else:
+        prompt = DRAFT_PROMPT.format(target_field=state["target_field"], transcript=_format_transcript(state))
     draft = llm_client.generate_structured(prompt, ResumeContent)
 
     state["draft"] = draft.model_dump()

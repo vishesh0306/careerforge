@@ -106,6 +106,119 @@ def test_full_happy_path_start_respond_confirm(test_user):
     assert stored.structured_content["contact"]["name"] == "Test Candidate"
     assert stored.source == "builder"
     assert stored.label == "Built for Backend Engineer"
+    assert stored.parent_resume_id is None
+    session.close()
+
+
+def test_start_with_nonexistent_base_resume_returns_404(test_user):
+    response = client.post(
+        "/resume-builder/start",
+        json={
+            "user_id": test_user,
+            "target_field": "Backend Engineer",
+            "self_description": "Add my new role.",
+            "base_resume_id": 99999999,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_start_with_base_resume_belonging_to_other_user_returns_400(test_user):
+    session = SessionLocal()
+    other_user = User(email="other-owner-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_resume = Resume(
+        user_id=other_user.id, structured_content={"contact": {"name": "Other"}}, version=1, source="uploaded"
+    )
+    session.add(other_resume)
+    session.commit()
+    session.refresh(other_resume)
+    other_resume_id, other_user_id = other_resume.id, other_user.id
+    session.close()
+
+    try:
+        response = client.post(
+            "/resume-builder/start",
+            json={
+                "user_id": test_user,
+                "target_field": "Backend Engineer",
+                "self_description": "Add my new role.",
+                "base_resume_id": other_resume_id,
+            },
+        )
+        assert response.status_code == 400
+    finally:
+        session = SessionLocal()
+        session.query(Resume).filter(Resume.user_id == other_user_id).delete()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
+
+
+def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_user):
+    session = SessionLocal()
+    base = Resume(
+        user_id=test_user,
+        structured_content={
+            "contact": {"name": "Original Name", "email": "", "phone": "", "location": "", "links": []},
+            "summary": "Old summary.",
+            "skills": {"languages": ["Python"], "frameworks": [], "tools": [], "cloud_devops": []},
+            "experience": [],
+            "projects": [],
+            "education": [],
+            "certifications": [],
+        },
+        version=1,
+        source="uploaded",
+    )
+    session.add(base)
+    session.commit()
+    session.refresh(base)
+    base_id = base.id
+    session.close()
+
+    updated_draft = ResumeContent(
+        contact=ContactInfo(name="Original Name"), summary="Updated summary with new role."
+    )
+
+    with patch(
+        "app.graphs.resume_builder_graph.llm_client.generate_structured",
+        side_effect=_llm_side_effect(
+            assess_results=[AssessmentResult(ready_to_draft=True)],
+            resume_results=[updated_draft],
+        ),
+    ) as mock_llm:
+        start_response = client.post(
+            "/resume-builder/start",
+            json={
+                "user_id": test_user,
+                "target_field": "Backend Engineer",
+                "self_description": "I got promoted, add my new title and a new achievement.",
+                "base_resume_id": base_id,
+            },
+        )
+
+    assert start_response.status_code == 201
+    body = start_response.json()
+    assert body["status"] == "AWAITING_CONFIRM"
+    assert body["draft"]["summary"] == "Updated summary with new role."
+
+    # The draft call must have used the base-resume-aware prompt, not the from-scratch one.
+    draft_call_prompt = mock_llm.call_args_list[-1].args[0]
+    assert "Original Name" in draft_call_prompt
+    assert "updating a candidate's EXISTING resume" in draft_call_prompt
+
+    run_id = body["run_id"]
+    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    assert confirm_response.status_code == 200
+    confirm_body = confirm_response.json()
+
+    session = SessionLocal()
+    new_resume = session.get(Resume, confirm_body["resume_id"])
+    assert new_resume.parent_resume_id == base_id
+    assert new_resume.version == 2  # base resume was version 1
     session.close()
 
 

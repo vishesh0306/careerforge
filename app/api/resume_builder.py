@@ -51,6 +51,17 @@ def start_resume_builder(body: StartRequest, db: Session = Depends(get_db)) -> B
     if user is None:
         raise HTTPException(status_code=404, detail=f"User {body.user_id} not found")
 
+    base_resume_content = None
+    if body.base_resume_id is not None:
+        base_resume = db.get(Resume, body.base_resume_id)
+        if base_resume is None:
+            raise HTTPException(status_code=404, detail=f"Resume {body.base_resume_id} not found")
+        if base_resume.user_id != body.user_id:
+            raise HTTPException(
+                status_code=400, detail=f"Resume {body.base_resume_id} does not belong to user {body.user_id}"
+            )
+        base_resume_content = base_resume.structured_content
+
     state: BuilderState = {
         "target_field": body.target_field,
         "messages": [{"role": "candidate", "content": body.self_description}],
@@ -59,6 +70,8 @@ def start_resume_builder(body: StartRequest, db: Session = Depends(get_db)) -> B
         "draft": None,
         "revision_feedback": None,
         "entry_point": "assess",
+        "base_resume": base_resume_content,
+        "base_resume_id": body.base_resume_id,
     }
     state = _invoke_graph(state)
 
@@ -106,12 +119,20 @@ def confirm_resume_builder(run_id: int, body: ConfirmRequest, db: Session = Depe
     state: BuilderState = run.context  # type: ignore[assignment]
 
     if body.approved:
+        base_resume_id = state.get("base_resume_id")
+        version = 1
+        if base_resume_id is not None:
+            base_resume = db.get(Resume, base_resume_id)
+            if base_resume is not None:
+                version = base_resume.version + 1
+
         resume = Resume(
             user_id=run.user_id,
             structured_content=state["draft"],
-            version=1,
+            version=version,
             source="builder",
             label=f"Built for {state['target_field']}",
+            parent_resume_id=base_resume_id,
         )
         db.add(resume)
         state["status"] = "FINALIZED"
