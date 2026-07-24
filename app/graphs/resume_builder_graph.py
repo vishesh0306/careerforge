@@ -23,6 +23,7 @@ class BuilderState(TypedDict):
     entry_point: Literal["assess", "revise"]
     base_resume: Optional[dict]
     base_resume_id: Optional[int]
+    emphasis_focus: Optional[str]
 
 
 class AssessmentResult(BaseModel):
@@ -37,7 +38,7 @@ Apply the standards a real hiring manager in this specific field would apply. Di
 different kinds of evidence (e.g. a backend engineer should quantify latency/scale/cost impact; a graphic \
 designer should describe creative process, tools used, and client/stakeholder outcomes) — adapt your \
 judgment and questions to what actually matters in "{target_field}".
-{base_resume_note}
+{base_resume_note}{emphasis_assess_note}
 Conversation so far:
 {transcript}
 
@@ -59,6 +60,22 @@ Existing resume (JSON):
 {base_resume_json}
 """
 
+EMPHASIS_ASSESS_NOTE = """
+The candidate wants this resume to specifically foreground their "{emphasis_focus}" experience. When deciding \
+what to ask about, prioritize digging deeper into their "{emphasis_focus}"-related work — get specific, \
+quantified detail there — over other areas, unless something else is critically vague or missing.
+"""
+
+EMPHASIS_DRAFT_INSTRUCTIONS = """
+The candidate knows multiple technologies/stacks and wants THIS resume to foreground their "{emphasis_focus}" \
+experience specifically:
+- Reorder each skills list so "{emphasis_focus}"-related items appear first within their category.
+- Reorder experience bullets within each job so "{emphasis_focus}"-related bullets come first.
+- If the summary mentions multiple stacks, lead with "{emphasis_focus}".
+- Do NOT omit or delete bullets or skills about other stacks the candidate mentioned — just move them later/ \
+lower. The candidate still wants their full breadth visible, just not leading.
+"""
+
 DRAFT_PROMPT = """You are a senior hiring manager and technical recruiter specializing in "{target_field}", \
 now drafting a resume for the candidate based ONLY on what they have told you in this conversation.
 
@@ -69,7 +86,7 @@ metrics, or skills the candidate did not state.
 - Write experience bullet points as strong, action-verb-led achievement statements using the candidate's \
 own facts — tighten the language, but do not add facts that were not given.
 - Leave any schema field blank or empty if the candidate never provided that information.
-
+{emphasis_draft_instructions}
 Conversation:
 {transcript}
 """
@@ -92,7 +109,7 @@ etc. — wherever the candidate gave new or updated detail.
 actually ended in 2023, not 2024"), apply that correction.
 - Use ONLY information explicitly provided — either already in the existing resume, or stated in this \
 conversation. Do NOT invent companies, dates, metrics, or skills that were never stated.
-"""
+{emphasis_draft_instructions}"""
 
 REVISE_PROMPT = """You are a senior hiring manager and technical recruiter specializing in "{target_field}". \
 Below is a draft resume you previously produced for a candidate, and their feedback on it.
@@ -122,8 +139,15 @@ def assess_node(state: BuilderState) -> BuilderState:
     if state.get("base_resume"):
         base_resume_note = BASE_RESUME_NOTE.format(base_resume_json=json.dumps(state["base_resume"]))
 
+    emphasis_assess_note = ""
+    if state.get("emphasis_focus"):
+        emphasis_assess_note = EMPHASIS_ASSESS_NOTE.format(emphasis_focus=state["emphasis_focus"])
+
     prompt = ASSESS_PROMPT.format(
-        target_field=state["target_field"], base_resume_note=base_resume_note, transcript=_format_transcript(state)
+        target_field=state["target_field"],
+        base_resume_note=base_resume_note,
+        emphasis_assess_note=emphasis_assess_note,
+        transcript=_format_transcript(state),
     )
     result = llm_client.generate_structured(prompt, AssessmentResult)
 
@@ -138,14 +162,23 @@ def assess_node(state: BuilderState) -> BuilderState:
 
 
 def draft_node(state: BuilderState) -> BuilderState:
+    emphasis_draft_instructions = ""
+    if state.get("emphasis_focus"):
+        emphasis_draft_instructions = EMPHASIS_DRAFT_INSTRUCTIONS.format(emphasis_focus=state["emphasis_focus"])
+
     if state.get("base_resume"):
         prompt = DRAFT_PROMPT_FROM_BASE.format(
             target_field=state["target_field"],
             base_resume_json=json.dumps(state["base_resume"]),
+            emphasis_draft_instructions=emphasis_draft_instructions,
             transcript=_format_transcript(state),
         )
     else:
-        prompt = DRAFT_PROMPT.format(target_field=state["target_field"], transcript=_format_transcript(state))
+        prompt = DRAFT_PROMPT.format(
+            target_field=state["target_field"],
+            emphasis_draft_instructions=emphasis_draft_instructions,
+            transcript=_format_transcript(state),
+        )
     draft = llm_client.generate_structured(prompt, ResumeContent)
 
     state["draft"] = draft.model_dump()

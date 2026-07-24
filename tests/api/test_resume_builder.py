@@ -222,6 +222,63 @@ def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_
     session.close()
 
 
+def test_start_with_emphasis_focus_steers_clarifying_question(test_user):
+    side_effect = _llm_side_effect(
+        assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Tell me more about Django.")],
+        resume_results=[],
+    )
+    with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect) as mock_llm:
+        response = client.post(
+            "/resume-builder/start",
+            json={
+                "user_id": test_user,
+                "target_field": "Backend Engineer",
+                "self_description": "I know Django and Spring Boot.",
+                "emphasis_focus": "Django",
+            },
+        )
+
+    assert response.status_code == 201
+    assess_prompt = mock_llm.call_args_list[0].args[0]
+    assert 'foreground their "Django" experience' in assess_prompt
+
+
+def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(test_user):
+    fake_draft = ResumeContent(contact=ContactInfo(name="Test Candidate"), summary="A great Django engineer.")
+
+    with patch(
+        "app.graphs.resume_builder_graph.llm_client.generate_structured",
+        side_effect=_llm_side_effect(
+            assess_results=[AssessmentResult(ready_to_draft=True)],
+            resume_results=[fake_draft],
+        ),
+    ) as mock_llm:
+        start_response = client.post(
+            "/resume-builder/start",
+            json={
+                "user_id": test_user,
+                "target_field": "Backend Engineer",
+                "self_description": "I know Django and Spring Boot, built APIs with both.",
+                "emphasis_focus": "Django",
+            },
+        )
+
+    assert start_response.status_code == 201
+    draft_prompt = mock_llm.call_args_list[-1].args[0]
+    assert 'foreground their "Django" experience' in draft_prompt
+    assert "Do NOT omit or delete" in draft_prompt
+
+    run_id = start_response.json()["run_id"]
+    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    assert confirm_response.status_code == 200
+    resume_id = confirm_response.json()["resume_id"]
+
+    session = SessionLocal()
+    stored = session.get(Resume, resume_id)
+    assert stored.label == "Built for Backend Engineer — Django focus"
+    session.close()
+
+
 def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
     initial_draft = ResumeContent(contact=ContactInfo(name=""), summary="Original summary.")
     revised_draft = ResumeContent(contact=ContactInfo(name="Now With Name"), summary="Original summary.")

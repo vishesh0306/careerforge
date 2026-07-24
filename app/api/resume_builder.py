@@ -72,6 +72,7 @@ def start_resume_builder(body: StartRequest, db: Session = Depends(get_db)) -> B
         "entry_point": "assess",
         "base_resume": base_resume_content,
         "base_resume_id": body.base_resume_id,
+        "emphasis_focus": body.emphasis_focus,
     }
     state = _invoke_graph(state)
 
@@ -126,12 +127,17 @@ def confirm_resume_builder(run_id: int, body: ConfirmRequest, db: Session = Depe
             if base_resume is not None:
                 version = base_resume.version + 1
 
+        emphasis_focus = state.get("emphasis_focus")
+        label = f"Built for {state['target_field']}"
+        if emphasis_focus:
+            label = f"{label} — {emphasis_focus} focus"
+
         resume = Resume(
             user_id=run.user_id,
             structured_content=state["draft"],
             version=version,
             source="builder",
-            label=f"Built for {state['target_field']}",
+            label=label,
             parent_resume_id=base_resume_id,
         )
         db.add(resume)

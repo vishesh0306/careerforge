@@ -20,6 +20,12 @@ class StartRequest(BaseModel):
         "The builder updates/extends it based on the conversation, preserving what's still accurate. "
         "Must belong to user_id.",
     )
+    emphasis_focus: Optional[str] = Field(
+        None,
+        description="Optional — a specific technology/stack/role focus (e.g. 'Django', 'React') to foreground "
+        "in this resume. Clarifying questions dig deeper into this area, and the draft reorders skills/bullets "
+        "to lead with it. Other stacks you mention are never deleted, just moved lower.",
+    )
 
 
 class RespondRequest(BaseModel):
