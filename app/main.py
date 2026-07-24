@@ -7,6 +7,7 @@ from redis import Redis
 from sqlalchemy import text
 
 from app.api.ats import router as ats_router
+from app.api.interview_prep import router as interview_prep_router
 from app.api.jobs import router as jobs_router
 from app.api.resume_builder import router as resume_builder_router
 from app.api.resumes import router as resumes_router
@@ -30,6 +31,7 @@ app.include_router(resume_builder_router, prefix="/resume-builder", tags=["resum
 app.include_router(ats_router, prefix="/ats", tags=["ats"])
 app.include_router(tailoring_router, prefix="/tailoring", tags=["tailoring"])
 app.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
+app.include_router(interview_prep_router, prefix="/interview-prep", tags=["interview-prep"])
 
 
 @app.get("/health")
