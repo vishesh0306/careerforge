@@ -5,6 +5,7 @@ from app.models.jd_analysis import JDAnalysis
 from app.models.job_search_pref import JobSearchPref
 from app.models.job_listing import JobListing
 from app.models.interview_prep import InterviewPrep
+from app.models.autofill_draft import AutofillDraft
 
 __all__ = [
     "User",
@@ -14,4 +15,5 @@ __all__ = [
     "JobSearchPref",
     "JobListing",
     "InterviewPrep",
+    "AutofillDraft",
 ]
