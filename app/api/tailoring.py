@@ -5,6 +5,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.logging import log_transition
 from app.core.ownership import get_owned_resume, get_owned_run
 from app.graphs.jd_tailoring_graph import TailoringState, jd_tailoring_graph
 from app.models import JDAnalysis, PipelineRun, Resume, User
@@ -81,6 +82,7 @@ def start_tailoring(
     )
     db.commit()
     db.refresh(run)
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status)
 
     return _response(run, state)
 
@@ -154,6 +156,7 @@ def confirm_gaps(
     run.current_step = state["status"]
     run.status = "completed"
     db.commit()
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status)
 
     return _response(run, state)
 

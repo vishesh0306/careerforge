@@ -4,11 +4,11 @@ A backend-first AI system that builds, scores, and tailors resumes against real 
 
 See [`PROJECT_SPEC.md`](PROJECT_SPEC.md) for what this does and why, [`ARCHITECTURE.md`](ARCHITECTURE.md) for the tech stack and system design, and [`DEVELOPMENT_ROADMAP.md`](DEVELOPMENT_ROADMAP.md) for the phased build plan and current progress.
 
-No frontend is in scope yet — FastAPI's auto-generated Swagger UI (`/docs`) is the interface.
+No frontend is in scope yet — FastAPI's auto-generated Swagger UI (`/careerForge`) is the interface.
 
 ## Status
 
-Currently in **Phase 0 — Project Scaffolding & Environment**. See `DEVELOPMENT_ROADMAP.md` for the full phase-by-phase checklist.
+All phases in `DEVELOPMENT_ROADMAP.md` are complete: resume parsing/building, PDF rendering, ATS scoring, JD-aware tailoring, job search aggregation, interview prep, auto-fill drafts, full pipeline orchestration, and JWT auth + rate limiting + structured logging.
 
 ## Tech stack
 
@@ -28,10 +28,24 @@ The app, PostgreSQL, and Redis all run as containers — this avoids installing 
    ```
    docker compose up --build
    ```
-3. The API is now available at `http://localhost:8000`, with interactive docs at `http://localhost:8000/docs`.
+3. The API is now available at `http://localhost:8000`, with interactive docs at `http://localhost:8000/careerForge`.
 4. Check `GET /health` — it reports API, database, and Redis connectivity status.
 
 Postgres is exposed on host port `5433` and Redis on `6380` (mapped to avoid clashing with any local installs), in case you want to connect a DB client directly.
+
+## Authentication
+
+Every endpoint except `/auth/register`, `/auth/login`, and `/health` requires a JWT bearer token:
+
+1. `POST /auth/register` with `{"email": ..., "password": ...}` — returns an `access_token`.
+2. `POST /auth/login` with the same credentials if you already have an account.
+3. Pass the token on every other request: `Authorization: Bearer <access_token>`.
+
+Tokens are signed with `JWT_SECRET_KEY` and expire after `JWT_EXPIRE_MINUTES` (default 24h). Resources (resumes, pipeline runs, etc.) are scoped to the authenticated user — requesting another user's resource returns `404`, not `403`, so as not to leak whether it exists.
+
+## Rate limiting
+
+All endpoints are limited to `120/minute` per client IP by default (Redis-backed, via `slowapi`). `/auth/register` and `/auth/login` have stricter limits (`5/minute` and `10/minute` respectively) to slow down credential-stuffing/enumeration attempts. Exceeding a limit returns `429 Too Many Requests`.
 
 ### Common commands
 
@@ -45,7 +59,7 @@ docker compose exec app pytest                    # run the test suite
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for the full list with descriptions. Required from Phase 0 onward: `DATABASE_URL`, `REDIS_URL`. Feature-specific keys (Gemini, Adzuna, JSearch) are only needed once the phase that uses them is reached.
+See [`.env.example`](.env.example) for the full list with descriptions. Always required: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET_KEY` (generate with `python -c "import secrets; print(secrets.token_urlsafe(48))"`). `GEMINI_API_KEY` is required for any LLM-backed endpoint (resume building, ATS scoring, tailoring, interview prep); `GEMINI_API_KEY_2` is an optional second key used as an automatic fallback when the first hits its quota. `ADZUNA_APP_ID`/`ADZUNA_APP_KEY`/`JSEARCH_RAPIDAPI_KEY` are only needed for job search.
 
 ## Project layout
 

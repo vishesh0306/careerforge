@@ -5,6 +5,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.logging import log_transition
 from app.core.ownership import get_owned_resume, get_owned_run
 from app.graphs.jd_tailoring_graph import tailor_resume
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
@@ -95,6 +96,7 @@ async def start_pipeline(
     db.add(run)
     db.commit()
     db.refresh(run)
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status)
 
     if current_step == "SEARCHING_JOBS":
         await _enqueue_job_search(run, db, request)
@@ -151,6 +153,7 @@ async def _enqueue_job_search(run: PipelineRun, db: Session, request: Request) -
     run.status = "in_progress"
     flag_modified(run, "context")
     db.commit()
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status, job_search_run_id=job_search_run.id)
 
     await request.app.state.arq_pool.enqueue_job(run_job_search.__name__, job_search_run.id)
 
@@ -182,6 +185,7 @@ async def _try_advance(run: PipelineRun, db: Session, request: Request) -> None:
                 run.status = "failed"
                 flag_modified(run, "context")
                 db.commit()
+                log_transition(RUN_TYPE, run.id, run.current_step, run.status, error=context["error"])
                 return
             if job_search_run.status != "completed":
                 return
@@ -286,6 +290,7 @@ def _tailor_shortlist(run: PipelineRun, db: Session, ranked_results: list[dict])
     run.status = "completed"
     flag_modified(run, "context")
     db.commit()
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status, shortlist_size=len(shortlist))
 
 
 def _status_response(run: PipelineRun, db: Session) -> PipelineStatusResponse:

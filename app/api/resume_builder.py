@@ -6,6 +6,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.logging import log_transition
 from app.core.ownership import get_owned_resume, get_owned_run
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
 from app.models import PipelineRun, Resume, User
@@ -31,6 +32,7 @@ def _persist(run: PipelineRun, state: BuilderState, db: Session) -> None:
     run.current_step = state["status"]
     run.status = "completed" if state["status"] == "FINALIZED" else "awaiting_input"
     db.commit()
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status)
 
 
 def _response(run: PipelineRun, state: BuilderState, resume_id: int | None = None) -> BuilderStateResponse:
@@ -87,6 +89,7 @@ def start_resume_builder(
     db.add(run)
     db.commit()
     db.refresh(run)
+    log_transition(RUN_TYPE, run.id, run.current_step, run.status)
 
     return _response(run, state)
 

@@ -4,6 +4,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.core.db import SessionLocal
+from app.core.logging import log_transition
 from app.models import JobListing, PipelineRun, Resume
 from app.schemas.resume import ResumeContent
 from app.services.ats_scoring import extract_candidate_years_experience, resume_content_to_text, score_resume_against_jd
@@ -125,6 +126,7 @@ async def run_job_search(ctx, pipeline_run_id: int) -> None:
             context["ranked_results"] = []
             run.context = context
             session.commit()
+            log_transition(run.run_type, run.id, run.current_step, run.status, error=context["error"])
             return
 
         try:
@@ -143,6 +145,7 @@ async def run_job_search(ctx, pipeline_run_id: int) -> None:
             run.current_step = "RESULTS_READY"
             run.status = "failed"
             session.commit()
+            log_transition(run.run_type, run.id, run.current_step, run.status, error=context["error"])
             return
 
         context["ranked_results"] = ranked_results
@@ -151,6 +154,7 @@ async def run_job_search(ctx, pipeline_run_id: int) -> None:
         run.current_step = "RESULTS_READY"
         run.status = "completed"
         session.commit()
+        log_transition(run.run_type, run.id, run.current_step, run.status, listings_ranked=len(ranked_results))
     finally:
         session.close()
 

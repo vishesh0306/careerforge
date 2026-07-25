@@ -116,6 +116,9 @@ class LLMClient:
         return self._call_with_fallback("generate_structured", prompt, schema, temperature=temperature)
 
     def _call_with_fallback(self, method_name: str, *args, **kwargs):
+        if not self._backends:
+            raise LLMError("No Gemini API key is configured — set GEMINI_API_KEY to use this feature.")
+
         last_exc: BaseException | None = None
         for i, backend in enumerate(self._backends):
             try:

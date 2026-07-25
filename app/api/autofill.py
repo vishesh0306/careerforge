@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_user
 from app.core.db import get_db
+from app.core.logging import log_transition
 from app.core.ownership import get_owned_resume
 from app.models import AutofillDraft, JobListing, User
 from app.schemas.autofill import AutofillDraftRequest, AutofillDraftResponse
@@ -53,6 +54,7 @@ async def create_autofill_draft(
         db.add(draft)
         db.commit()
         db.refresh(draft)
+        log_transition("autofill_draft", draft.id, draft.ats_platform, draft.status, error=draft.error)
         return AutofillDraftResponse(
             id=draft.id,
             job_listing_id=listing_id,
@@ -74,6 +76,7 @@ async def create_autofill_draft(
     db.add(draft)
     db.commit()
     db.refresh(draft)
+    log_transition("autofill_draft", draft.id, draft.ats_platform, draft.status)
 
     return AutofillDraftResponse(
         id=draft.id,

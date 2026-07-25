@@ -4,6 +4,9 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
 from redis import Redis
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from app.api.ats import router as ats_router
@@ -18,6 +21,10 @@ from app.api.tailoring import router as tailoring_router
 from app.core import lenient_json  # noqa: F401 — patches Request.json() to accept raw newlines in strings
 from app.core.config import settings
 from app.core.db import engine
+from app.core.logging import configure_logging
+from app.core.rate_limit import limiter
+
+configure_logging()
 
 
 @asynccontextmanager
@@ -28,6 +35,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="CareerForge", lifespan=lifespan, docs_url="/careerForge")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(resumes_router, prefix="/resumes", tags=["resumes"])

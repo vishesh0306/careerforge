@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str
     redis_url: str
-    gemini_api_key: str = Field(min_length=1)
+    # Optional at startup — endpoints that need an LLM call raise a clear error (see
+    # app/services/llm_client.py) instead of the whole app failing to boot without a key.
+    gemini_api_key: str | None = None
     # Optional — tried in order after gemini_api_key when a call hits a rate-limit/quota error,
     # so a second free-tier key roughly doubles the effective daily ceiling.
     gemini_api_key_2: str | None = None
