@@ -240,14 +240,24 @@ def compute_experience_fit(candidate_years: float | None, min_years_required: fl
     return max(0.0, candidate_years / min_years_required)
 
 
-def score_resume_against_jd(resume: ResumeContent, jd_text: str) -> ATSScoreResult:
+def score_resume_against_jd(
+    resume: ResumeContent, jd_text: str, candidate_years_experience: float | None = None
+) -> ATSScoreResult:
+    """candidate_years_experience lets a caller scoring the same resume against many JDs (e.g. the
+    job search worker ranking a batch of listings) compute it once upfront instead of paying for a
+    fresh LLM call per JD — the answer depends only on the resume, not on jd_text. Pass None to have
+    it computed here (the right default for a single one-off scoring call)."""
     resume_text = resume_content_to_text(resume)
     terms = extract_jd_terms(jd_text)
     keyword_score, must_present, must_missing, nice_present, nice_missing = compute_keyword_coverage(
         resume_text, terms
     )
     semantic_similarity = cosine_similarity(resume_text, jd_text)
-    candidate_years = extract_candidate_years_experience(resume.experience)
+    candidate_years = (
+        candidate_years_experience
+        if candidate_years_experience is not None
+        else extract_candidate_years_experience(resume.experience)
+    )
     experience_fit = compute_experience_fit(candidate_years, terms.min_years_required)
 
     combined = (

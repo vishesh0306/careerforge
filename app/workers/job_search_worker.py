@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models import JobListing, PipelineRun, Resume
 from app.schemas.resume import ResumeContent
-from app.services.ats_scoring import resume_content_to_text, score_resume_against_jd
+from app.services.ats_scoring import extract_candidate_years_experience, resume_content_to_text, score_resume_against_jd
 from app.services.embeddings import cosine_similarity
 from app.services.job_search.aggregator import get_or_fetch_listing_ids
 from app.services.job_search.common import JobSearchQuery
@@ -56,12 +56,15 @@ async def _search_and_rank(session, context: dict, resume: Resume) -> tuple[list
     )
 
     candidate_experience_years = context.get("experience_years")
+    # Depends only on the resume, not on any one JD — compute once for the whole batch instead of
+    # once per listing, so scoring N listings doesn't cost N redundant LLM calls for the same answer.
+    candidate_years_experience = extract_candidate_years_experience(resume_content.experience)
 
     ranked_results = []
     for listing in pre_ranked[:MAX_LISTINGS_TO_SCORE]:
         jd_text = listing.jd_text or f"{listing.title} at {listing.company or 'an unlisted company'}"
         try:
-            score_result = score_resume_against_jd(resume_content, jd_text)
+            score_result = score_resume_against_jd(resume_content, jd_text, candidate_years_experience)
         except Exception as exc:
             # A single listing's scoring failure (e.g. retries exhausted on a
             # persistent rate limit) must never abort the whole search run.

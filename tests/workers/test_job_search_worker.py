@@ -94,6 +94,7 @@ def test_run_job_search_ranks_results_by_score():
                 new=AsyncMock(return_value=ids["listing_ids"]),
             ),
             patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch("app.workers.job_search_worker.extract_candidate_years_experience", return_value=2.0),
             patch("app.workers.job_search_worker.score_resume_against_jd", side_effect=[score_a, score_b]),
         ):
             asyncio.run(run_job_search(None, ids["run_id"]))
@@ -129,6 +130,7 @@ def test_run_job_search_filters_out_listings_below_score_floor():
                 new=AsyncMock(return_value=ids["listing_ids"]),
             ),
             patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch("app.workers.job_search_worker.extract_candidate_years_experience", return_value=2.0),
             patch(
                 "app.workers.job_search_worker.score_resume_against_jd",
                 side_effect=[score_ok, score_too_low],
@@ -172,6 +174,7 @@ def test_run_job_search_filters_out_listings_requiring_far_more_experience():
                 new=AsyncMock(return_value=ids["listing_ids"]),
             ),
             patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch("app.workers.job_search_worker.extract_candidate_years_experience", return_value=1.0),
             patch(
                 "app.workers.job_search_worker.score_resume_against_jd",
                 side_effect=[score_senior, score_reachable],
@@ -204,6 +207,7 @@ def test_run_job_search_skips_listing_on_scoring_failure():
                 new=AsyncMock(return_value=ids["listing_ids"]),
             ),
             patch("app.workers.job_search_worker.cosine_similarity", return_value=0.5),
+            patch("app.workers.job_search_worker.extract_candidate_years_experience", return_value=2.0),
             patch(
                 "app.workers.job_search_worker.score_resume_against_jd",
                 side_effect=[Exception("persistent rate limit"), score_ok],

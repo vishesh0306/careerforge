@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.db import get_db
 from app.graphs.jd_tailoring_graph import TailoringState, jd_tailoring_graph
@@ -141,6 +142,10 @@ def confirm_gaps(run_id: int, body: ConfirmGapsRequest, db: Session = Depends(ge
 
     state["tailored_resume_id"] = new_resume.id
     run.context = dict(state)
+    # See app/api/resume_builder.py's _persist for why this is needed: run.context was aliased
+    # and mutated in place earlier in this function (the gap-confirmation loop above), which can
+    # make SQLAlchemy's dirty-check see old == new and silently skip the UPDATE.
+    flag_modified(run, "context")
     run.current_step = state["status"]
     run.status = "completed"
     db.commit()

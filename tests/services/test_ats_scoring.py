@@ -1,6 +1,14 @@
+from unittest.mock import patch
+
 import pytest
 
-from app.services.ats_scoring import JDTerms, compute_experience_fit, compute_keyword_coverage, resume_content_to_text
+from app.services.ats_scoring import (
+    JDTerms,
+    compute_experience_fit,
+    compute_keyword_coverage,
+    resume_content_to_text,
+    score_resume_against_jd,
+)
 from app.schemas.resume import ContactInfo, ExperienceEntry, ProjectEntry, ResumeContent, Skills
 
 
@@ -120,3 +128,41 @@ def test_compute_experience_fit_partial_credit_when_under_requirement():
 
 def test_compute_experience_fit_zero_when_no_experience_but_requirement_exists():
     assert compute_experience_fit(candidate_years=0.0, min_years_required=3.0) == 0.0
+
+
+def test_score_resume_against_jd_skips_llm_call_when_candidate_years_precomputed():
+    resume = ResumeContent(
+        contact=ContactInfo(name="Test"),
+        experience=[ExperienceEntry(company="Acme", title="Engineer", start_date="2020", end_date="Present")],
+    )
+    terms = JDTerms(must_have=["Python"], nice_to_have=[], min_years_required=3.0)
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms", return_value=terms),
+        patch("app.services.ats_scoring.cosine_similarity", return_value=0.8),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Great fit."),
+        patch("app.services.ats_scoring.extract_candidate_years_experience") as mock_extract,
+    ):
+        result = score_resume_against_jd(resume, "Need Python, 3+ years.", candidate_years_experience=5.0)
+
+    mock_extract.assert_not_called()
+    assert result.candidate_years_experience == 5.0
+
+
+def test_score_resume_against_jd_computes_candidate_years_when_not_provided():
+    resume = ResumeContent(
+        contact=ContactInfo(name="Test"),
+        experience=[ExperienceEntry(company="Acme", title="Engineer", start_date="2020", end_date="Present")],
+    )
+    terms = JDTerms(must_have=["Python"], nice_to_have=[], min_years_required=3.0)
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms", return_value=terms),
+        patch("app.services.ats_scoring.cosine_similarity", return_value=0.8),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Great fit."),
+        patch("app.services.ats_scoring.extract_candidate_years_experience", return_value=4.0) as mock_extract,
+    ):
+        result = score_resume_against_jd(resume, "Need Python, 3+ years.")
+
+    mock_extract.assert_called_once()
+    assert result.candidate_years_experience == 4.0

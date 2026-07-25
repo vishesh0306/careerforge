@@ -169,7 +169,11 @@ def tailor_and_rescore_node(state: TailoringState) -> TailoringState:
     # call entirely when there is truly nothing to do.
     if confirmed_gaps or emphasis_focus:
         tailored = tailor_resume(resume, state["jd_text"], confirmed_gaps, emphasis_focus)
-        rescore = score_resume_against_jd(tailored, state["jd_text"])
+        # Tailoring reorders/rewords existing content and adds skills/bullets — it never changes
+        # an experience entry's dates, so the years-of-experience figure from the original score
+        # is still correct here and reusing it saves a redundant LLM call.
+        candidate_years_experience = state["original_score"].get("candidate_years_experience")
+        rescore = score_resume_against_jd(tailored, state["jd_text"], candidate_years_experience)
     else:
         tailored = resume
         rescore = ATSScoreResult.model_validate(state["original_score"])
