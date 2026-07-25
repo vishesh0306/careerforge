@@ -166,3 +166,36 @@ def test_score_resume_against_jd_computes_candidate_years_when_not_provided():
 
     mock_extract.assert_called_once()
     assert result.candidate_years_experience == 4.0
+
+
+def test_score_resume_against_jd_skips_extraction_when_jd_terms_precomputed():
+    resume = ResumeContent(contact=ContactInfo(name="Test"), skills=Skills(languages=["Python"]))
+    precomputed_terms = JDTerms(must_have=["Python", "Django"], nice_to_have=["Docker"], min_years_required=3.0)
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms") as mock_extract_terms,
+        patch("app.services.ats_scoring.cosine_similarity", return_value=0.8),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Great fit."),
+        patch("app.services.ats_scoring.extract_candidate_years_experience", return_value=5.0),
+    ):
+        result = score_resume_against_jd(resume, "irrelevant jd text", jd_terms=precomputed_terms)
+
+    mock_extract_terms.assert_not_called()
+    assert result.must_have_present == ["Python"]
+    assert result.must_have_missing == ["Django"]
+    assert result.min_years_required == 3.0
+
+
+def test_score_resume_against_jd_extracts_jd_terms_when_not_provided():
+    resume = ResumeContent(contact=ContactInfo(name="Test"), skills=Skills(languages=["Python"]))
+    terms = JDTerms(must_have=["Python"], nice_to_have=[], min_years_required=3.0)
+
+    with (
+        patch("app.services.ats_scoring.extract_jd_terms", return_value=terms) as mock_extract_terms,
+        patch("app.services.ats_scoring.cosine_similarity", return_value=0.8),
+        patch("app.services.ats_scoring.generate_fit_comment", return_value="Great fit."),
+        patch("app.services.ats_scoring.extract_candidate_years_experience", return_value=5.0),
+    ):
+        score_resume_against_jd(resume, "Need Python, 3+ years.")
+
+    mock_extract_terms.assert_called_once()

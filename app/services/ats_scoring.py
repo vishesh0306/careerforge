@@ -241,14 +241,22 @@ def compute_experience_fit(candidate_years: float | None, min_years_required: fl
 
 
 def score_resume_against_jd(
-    resume: ResumeContent, jd_text: str, candidate_years_experience: float | None = None
+    resume: ResumeContent,
+    jd_text: str,
+    candidate_years_experience: float | None = None,
+    jd_terms: JDTerms | None = None,
 ) -> ATSScoreResult:
     """candidate_years_experience lets a caller scoring the same resume against many JDs (e.g. the
     job search worker ranking a batch of listings) compute it once upfront instead of paying for a
     fresh LLM call per JD — the answer depends only on the resume, not on jd_text. Pass None to have
-    it computed here (the right default for a single one-off scoring call)."""
+    it computed here (the right default for a single one-off scoring call).
+
+    jd_terms lets a caller re-scoring against the SAME jd_text (e.g. rescoring a tailored resume
+    against the JD it was tailored for) reuse the terms already extracted from that text instead of
+    re-extracting them — the terms depend only on jd_text, not on the resume. Pass None to extract
+    fresh (the right default whenever jd_text might differ from a prior call)."""
     resume_text = resume_content_to_text(resume)
-    terms = extract_jd_terms(jd_text)
+    terms = jd_terms if jd_terms is not None else extract_jd_terms(jd_text)
     keyword_score, must_present, must_missing, nice_present, nice_missing = compute_keyword_coverage(
         resume_text, terms
     )

@@ -4,7 +4,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
 from app.schemas.resume import ResumeContent
-from app.services.ats_scoring import ATSScoreResult, resume_content_to_text, score_resume_against_jd
+from app.services.ats_scoring import ATSScoreResult, JDTerms, resume_content_to_text, score_resume_against_jd
 from app.services.llm_client import llm_client
 
 
@@ -173,7 +173,16 @@ def tailor_and_rescore_node(state: TailoringState) -> TailoringState:
         # an experience entry's dates, so the years-of-experience figure from the original score
         # is still correct here and reusing it saves a redundant LLM call.
         candidate_years_experience = state["original_score"].get("candidate_years_experience")
-        rescore = score_resume_against_jd(tailored, state["jd_text"], candidate_years_experience)
+        # jd_text is unchanged from the original scoring pass — the must-have/nice-to-have terms
+        # extracted from it then are still correct now, so rebuild that JDTerms from the
+        # present+missing lists already stored in original_score instead of re-extracting.
+        original = state["original_score"]
+        jd_terms = JDTerms(
+            must_have=original["must_have_present"] + original["must_have_missing"],
+            nice_to_have=original["nice_to_have_present"] + original["nice_to_have_missing"],
+            min_years_required=original.get("min_years_required"),
+        )
+        rescore = score_resume_against_jd(tailored, state["jd_text"], candidate_years_experience, jd_terms)
     else:
         tailored = resume
         rescore = ATSScoreResult.model_validate(state["original_score"])
