@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
-from app.models import InterviewPrep, JDAnalysis, Resume
+from app.core.ownership import get_owned_resume
+from app.models import InterviewPrep, JDAnalysis, User
 from app.schemas.interview_prep import InterviewPrepResponse
 from app.schemas.resume import ResumeContent
 from app.services.interview_prep import generate_interview_prep
@@ -13,14 +15,14 @@ router = APIRouter()
 
 
 @router.post("/{jd_analysis_id}", response_model=InterviewPrepResponse, status_code=status.HTTP_201_CREATED)
-def generate_prep_for_jd_analysis(jd_analysis_id: int, db: Session = Depends(get_db)) -> InterviewPrepResponse:
+def generate_prep_for_jd_analysis(
+    jd_analysis_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> InterviewPrepResponse:
     analysis = db.get(JDAnalysis, jd_analysis_id)
     if analysis is None:
         raise HTTPException(status_code=404, detail=f"JD analysis {jd_analysis_id} not found")
 
-    resume = db.get(Resume, analysis.resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {analysis.resume_id} not found")
+    resume = get_owned_resume(analysis.resume_id, current_user, db)
 
     content = ResumeContent.model_validate(resume.structured_content)
     try:

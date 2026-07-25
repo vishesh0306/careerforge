@@ -2,8 +2,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.ownership import get_owned_resume
 from app.models import Resume, User
 from app.schemas.resume import ResumeContent, ResumeContentPatch, ResumeResponse, merge_resume_patch
 from app.services.llm_client import LLMError
@@ -20,14 +22,10 @@ router = APIRouter()
 
 @router.post("/upload", response_model=ResumeResponse, status_code=status.HTTP_201_CREATED)
 async def upload_resume(
-    user_id: int,
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Resume:
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
-
     filename = (file.filename or "").lower()
     if filename.endswith(".pdf"):
         file_type = "pdf"
@@ -51,7 +49,7 @@ async def upload_resume(
         raise llm_error_response(exc, "Resume parsing") from exc
 
     resume = Resume(
-        user_id=user_id,
+        user_id=current_user.id,
         structured_content=structured_content.model_dump(),
         version=1,
         source="uploaded",
@@ -65,24 +63,23 @@ async def upload_resume(
 
 
 @router.get("", response_model=list[ResumeResponse])
-def list_resumes(user_id: int, db: Session = Depends(get_db)) -> list[Resume]:
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
-
+def list_resumes(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Resume]:
     return (
         db.query(Resume)
-        .filter(Resume.user_id == user_id)
+        .filter(Resume.user_id == current_user.id)
         .order_by(Resume.created_at.desc())
         .all()
     )
 
 
 @router.patch("/{resume_id}", response_model=ResumeResponse)
-def patch_resume(resume_id: int, body: ResumeContentPatch, db: Session = Depends(get_db)) -> Resume:
-    resume = db.get(Resume, resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
+def patch_resume(
+    resume_id: int,
+    body: ResumeContentPatch,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Resume:
+    resume = get_owned_resume(resume_id, current_user, db)
 
     if not body.model_fields_set:
         raise HTTPException(status_code=400, detail="No fields provided to patch")
@@ -100,10 +97,10 @@ def patch_resume(resume_id: int, body: ResumeContentPatch, db: Session = Depends
 
 
 @router.get("/{resume_id}/pdf")
-def download_resume_pdf(resume_id: int, db: Session = Depends(get_db)) -> Response:
-    resume = db.get(Resume, resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
+def download_resume_pdf(
+    resume_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> Response:
+    resume = get_owned_resume(resume_id, current_user, db)
 
     content = ResumeContent.model_validate(resume.structured_content)
     pdf_bytes = render_resume_pdf(content)

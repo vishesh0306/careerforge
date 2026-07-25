@@ -8,6 +8,7 @@ from app.graphs.resume_builder_graph import AssessmentResult
 from app.main import app
 from app.models import PipelineRun, Resume, User
 from app.schemas.resume import ContactInfo, ResumeContent
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -32,6 +33,11 @@ def test_user():
     session.close()
 
 
+@pytest.fixture()
+def auth_headers(test_user):
+    return auth_headers_for(test_user)
+
+
 def _llm_side_effect(assess_results, resume_results):
     assess_iter = iter(assess_results)
     resume_iter = iter(resume_results)
@@ -44,7 +50,7 @@ def _llm_side_effect(assess_results, resume_results):
     return side_effect
 
 
-def test_start_returns_clarifying_question_when_info_insufficient(test_user):
+def test_start_returns_clarifying_question_when_info_insufficient(test_user, auth_headers):
     side_effect = _llm_side_effect(
         assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="What company did you work at?")],
         resume_results=[],
@@ -52,7 +58,8 @@ def test_start_returns_clarifying_question_when_info_insufficient(test_user):
     with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
         response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+            json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -63,7 +70,15 @@ def test_start_returns_clarifying_question_when_info_insufficient(test_user):
     assert body["resume_id"] is None
 
 
-def test_full_happy_path_start_respond_confirm(test_user):
+def test_start_without_auth_returns_403(test_user):
+    response = client.post(
+        "/resume-builder/start",
+        json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+    )
+    assert response.status_code == 403
+
+
+def test_full_happy_path_start_respond_confirm(test_user, auth_headers):
     fake_draft = ResumeContent(contact=ContactInfo(name="Test Candidate"), summary="A great engineer.")
 
     with patch(
@@ -75,7 +90,8 @@ def test_full_happy_path_start_respond_confirm(test_user):
     ):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+            json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
     assert start_response.json()["status"] == "CLARIFYING"
@@ -87,14 +103,18 @@ def test_full_happy_path_start_respond_confirm(test_user):
             resume_results=[fake_draft],
         ),
     ):
-        respond_response = client.post(f"/resume-builder/{run_id}/respond", json={"answer": "Acme Corp, built APIs."})
+        respond_response = client.post(
+            f"/resume-builder/{run_id}/respond", json={"answer": "Acme Corp, built APIs."}, headers=auth_headers
+        )
 
     assert respond_response.status_code == 200
     respond_body = respond_response.json()
     assert respond_body["status"] == "AWAITING_CONFIRM"
     assert respond_body["draft"]["contact"]["name"] == "Test Candidate"
 
-    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    confirm_response = client.post(
+        f"/resume-builder/{run_id}/confirm", json={"approved": True}, headers=auth_headers
+    )
     assert confirm_response.status_code == 200
     confirm_body = confirm_response.json()
     assert confirm_body["status"] == "FINALIZED"
@@ -110,20 +130,20 @@ def test_full_happy_path_start_respond_confirm(test_user):
     session.close()
 
 
-def test_start_with_nonexistent_base_resume_returns_404(test_user):
+def test_start_with_nonexistent_base_resume_returns_404(test_user, auth_headers):
     response = client.post(
         "/resume-builder/start",
         json={
-            "user_id": test_user,
             "target_field": "Backend Engineer",
             "self_description": "Add my new role.",
             "base_resume_id": 99999999,
         },
+        headers=auth_headers,
     )
     assert response.status_code == 404
 
 
-def test_start_with_base_resume_belonging_to_other_user_returns_400(test_user):
+def test_start_with_base_resume_belonging_to_other_user_returns_404(test_user, auth_headers):
     session = SessionLocal()
     other_user = User(email="other-owner-pytest@example.com", hashed_password="hashed")
     session.add(other_user)
@@ -142,13 +162,13 @@ def test_start_with_base_resume_belonging_to_other_user_returns_400(test_user):
         response = client.post(
             "/resume-builder/start",
             json={
-                "user_id": test_user,
                 "target_field": "Backend Engineer",
                 "self_description": "Add my new role.",
                 "base_resume_id": other_resume_id,
             },
+            headers=auth_headers,
         )
-        assert response.status_code == 400
+        assert response.status_code == 404
     finally:
         session = SessionLocal()
         session.query(Resume).filter(Resume.user_id == other_user_id).delete()
@@ -157,7 +177,7 @@ def test_start_with_base_resume_belonging_to_other_user_returns_400(test_user):
         session.close()
 
 
-def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_user):
+def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_user, auth_headers):
     session = SessionLocal()
     base = Resume(
         user_id=test_user,
@@ -193,11 +213,11 @@ def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_
         start_response = client.post(
             "/resume-builder/start",
             json={
-                "user_id": test_user,
                 "target_field": "Backend Engineer",
                 "self_description": "I got promoted, add my new title and a new achievement.",
                 "base_resume_id": base_id,
             },
+            headers=auth_headers,
         )
 
     assert start_response.status_code == 201
@@ -211,7 +231,9 @@ def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_
     assert "updating a candidate's EXISTING resume" in draft_call_prompt
 
     run_id = body["run_id"]
-    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    confirm_response = client.post(
+        f"/resume-builder/{run_id}/confirm", json={"approved": True}, headers=auth_headers
+    )
     assert confirm_response.status_code == 200
     confirm_body = confirm_response.json()
 
@@ -222,7 +244,7 @@ def test_build_from_base_resume_seeds_context_and_sets_lineage_on_finalize(test_
     session.close()
 
 
-def test_captured_so_far_surfaced_during_clarifying(test_user):
+def test_captured_so_far_surfaced_during_clarifying(test_user, auth_headers):
     side_effect = _llm_side_effect(
         assess_results=[
             AssessmentResult(
@@ -236,7 +258,8 @@ def test_captured_so_far_surfaced_during_clarifying(test_user):
     with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
         response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+            json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -244,7 +267,7 @@ def test_captured_so_far_surfaced_during_clarifying(test_user):
     assert body["captured_so_far"] == ["Backend engineer", "Worked on APIs"]
 
 
-def test_captured_so_far_defaults_to_empty_list_when_not_returned(test_user):
+def test_captured_so_far_defaults_to_empty_list_when_not_returned(test_user, auth_headers):
     side_effect = _llm_side_effect(
         assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="What company?")],
         resume_results=[],
@@ -252,14 +275,15 @@ def test_captured_so_far_defaults_to_empty_list_when_not_returned(test_user):
     with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
         response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+            json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
     assert response.json()["captured_so_far"] == []
 
 
-def test_start_with_emphasis_focus_steers_clarifying_question(test_user):
+def test_start_with_emphasis_focus_steers_clarifying_question(test_user, auth_headers):
     side_effect = _llm_side_effect(
         assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Tell me more about Django.")],
         resume_results=[],
@@ -268,11 +292,11 @@ def test_start_with_emphasis_focus_steers_clarifying_question(test_user):
         response = client.post(
             "/resume-builder/start",
             json={
-                "user_id": test_user,
                 "target_field": "Backend Engineer",
                 "self_description": "I know Django and Spring Boot.",
                 "emphasis_focus": "Django",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -280,7 +304,7 @@ def test_start_with_emphasis_focus_steers_clarifying_question(test_user):
     assert 'foreground their "Django" experience' in assess_prompt
 
 
-def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(test_user):
+def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(test_user, auth_headers):
     fake_draft = ResumeContent(contact=ContactInfo(name="Test Candidate"), summary="A great Django engineer.")
 
     with patch(
@@ -293,11 +317,11 @@ def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(t
         start_response = client.post(
             "/resume-builder/start",
             json={
-                "user_id": test_user,
                 "target_field": "Backend Engineer",
                 "self_description": "I know Django and Spring Boot, built APIs with both.",
                 "emphasis_focus": "Django",
             },
+            headers=auth_headers,
         )
 
     assert start_response.status_code == 201
@@ -306,7 +330,9 @@ def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(t
     assert "Do NOT omit or delete" in draft_prompt
 
     run_id = start_response.json()["run_id"]
-    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    confirm_response = client.post(
+        f"/resume-builder/{run_id}/confirm", json={"approved": True}, headers=auth_headers
+    )
     assert confirm_response.status_code == 200
     resume_id = confirm_response.json()["resume_id"]
 
@@ -316,7 +342,7 @@ def test_confirm_with_emphasis_focus_sets_label_and_uses_emphasis_instructions(t
     session.close()
 
 
-def test_patch_draft_replaces_only_included_sections(test_user):
+def test_patch_draft_replaces_only_included_sections(test_user, auth_headers):
     fake_draft = ResumeContent(
         contact=ContactInfo(name="Test Candidate"), summary="A great engineer.", certifications=["AWS Certified"]
     )
@@ -327,11 +353,14 @@ def test_patch_draft_replaces_only_included_sections(test_user):
     ):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+            json={"target_field": "Backend Engineer", "self_description": "Enough detail."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
 
-    patch_response = client.patch(f"/resume-builder/{run_id}/draft", json={"summary": "Manually edited summary."})
+    patch_response = client.patch(
+        f"/resume-builder/{run_id}/draft", json={"summary": "Manually edited summary."}, headers=auth_headers
+    )
 
     assert patch_response.status_code == 200
     body = patch_response.json()
@@ -340,7 +369,9 @@ def test_patch_draft_replaces_only_included_sections(test_user):
     assert body["draft"]["certifications"] == ["AWS Certified"]
     assert body["status"] == "AWAITING_CONFIRM"
 
-    confirm_response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": True})
+    confirm_response = client.post(
+        f"/resume-builder/{run_id}/confirm", json={"approved": True}, headers=auth_headers
+    )
     assert confirm_response.status_code == 200
     resume_id = confirm_response.json()["resume_id"]
 
@@ -350,7 +381,7 @@ def test_patch_draft_replaces_only_included_sections(test_user):
     session.close()
 
 
-def test_patch_draft_rejected_when_not_awaiting_confirm(test_user):
+def test_patch_draft_rejected_when_not_awaiting_confirm(test_user, auth_headers):
     side_effect = _llm_side_effect(
         assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Which company?")],
         resume_results=[],
@@ -358,15 +389,18 @@ def test_patch_draft_rejected_when_not_awaiting_confirm(test_user):
     with patch("app.graphs.resume_builder_graph.llm_client.generate_structured", side_effect=side_effect):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "I did some coding."},
+            json={"target_field": "Backend Engineer", "self_description": "I did some coding."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
 
-    response = client.patch(f"/resume-builder/{run_id}/draft", json={"summary": "New summary."})
+    response = client.patch(
+        f"/resume-builder/{run_id}/draft", json={"summary": "New summary."}, headers=auth_headers
+    )
     assert response.status_code == 409
 
 
-def test_patch_draft_empty_body_returns_400(test_user):
+def test_patch_draft_empty_body_returns_400(test_user, auth_headers):
     initial_draft = ResumeContent(contact=ContactInfo(name="X"))
     with patch(
         "app.graphs.resume_builder_graph.llm_client.generate_structured",
@@ -374,15 +408,16 @@ def test_patch_draft_empty_body_returns_400(test_user):
     ):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+            json={"target_field": "Backend Engineer", "self_description": "Enough detail."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
 
-    response = client.patch(f"/resume-builder/{run_id}/draft", json={})
+    response = client.patch(f"/resume-builder/{run_id}/draft", json={}, headers=auth_headers)
     assert response.status_code == 400
 
 
-def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
+def test_confirm_revision_loop_preserves_and_updates_draft(test_user, auth_headers):
     initial_draft = ResumeContent(contact=ContactInfo(name=""), summary="Original summary.")
     revised_draft = ResumeContent(contact=ContactInfo(name="Now With Name"), summary="Original summary.")
 
@@ -396,10 +431,10 @@ def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
         start_response = client.post(
             "/resume-builder/start",
             json={
-                "user_id": test_user,
                 "target_field": "Backend Engineer",
                 "self_description": "Detailed enough description with concrete facts.",
             },
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
     assert start_response.json()["status"] == "AWAITING_CONFIRM"
@@ -411,6 +446,7 @@ def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
         revise_response = client.post(
             f"/resume-builder/{run_id}/confirm",
             json={"approved": False, "feedback": "Add my name: Now With Name"},
+            headers=auth_headers,
         )
 
     assert revise_response.status_code == 200
@@ -420,7 +456,7 @@ def test_confirm_revision_loop_preserves_and_updates_draft(test_user):
     assert body["draft"]["summary"] == "Original summary."
 
 
-def test_respond_rejected_when_not_in_clarifying_state(test_user):
+def test_respond_rejected_when_not_in_clarifying_state(test_user, auth_headers):
     initial_draft = ResumeContent(contact=ContactInfo(name="X"))
     with patch(
         "app.graphs.resume_builder_graph.llm_client.generate_structured",
@@ -431,15 +467,18 @@ def test_respond_rejected_when_not_in_clarifying_state(test_user):
     ):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+            json={"target_field": "Backend Engineer", "self_description": "Enough detail."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
 
-    response = client.post(f"/resume-builder/{run_id}/respond", json={"answer": "irrelevant"})
+    response = client.post(
+        f"/resume-builder/{run_id}/respond", json={"answer": "irrelevant"}, headers=auth_headers
+    )
     assert response.status_code == 409
 
 
-def test_confirm_requires_feedback_when_rejecting(test_user):
+def test_confirm_requires_feedback_when_rejecting(test_user, auth_headers):
     initial_draft = ResumeContent(contact=ContactInfo(name="X"))
     with patch(
         "app.graphs.resume_builder_graph.llm_client.generate_structured",
@@ -450,17 +489,50 @@ def test_confirm_requires_feedback_when_rejecting(test_user):
     ):
         start_response = client.post(
             "/resume-builder/start",
-            json={"user_id": test_user, "target_field": "Backend Engineer", "self_description": "Enough detail."},
+            json={"target_field": "Backend Engineer", "self_description": "Enough detail."},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
 
-    response = client.post(f"/resume-builder/{run_id}/confirm", json={"approved": False})
+    response = client.post(
+        f"/resume-builder/{run_id}/confirm", json={"approved": False}, headers=auth_headers
+    )
     assert response.status_code == 400
 
 
-def test_start_with_nonexistent_user_returns_404():
-    response = client.post(
-        "/resume-builder/start",
-        json={"user_id": 99999999, "target_field": "Backend Engineer", "self_description": "whatever"},
-    )
-    assert response.status_code == 404
+def test_run_belonging_to_other_user_returns_404(test_user, auth_headers):
+    session = SessionLocal()
+    other_user = User(email="other-run-owner-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    initial_draft = ResumeContent(contact=ContactInfo(name="X"))
+    try:
+        with patch(
+            "app.graphs.resume_builder_graph.llm_client.generate_structured",
+            side_effect=_llm_side_effect(
+                assess_results=[AssessmentResult(ready_to_draft=False, clarifying_question="Which company?")],
+                resume_results=[],
+            ),
+        ):
+            start_response = client.post(
+                "/resume-builder/start",
+                json={"target_field": "Backend Engineer", "self_description": "Enough detail."},
+                headers=other_headers,
+            )
+        run_id = start_response.json()["run_id"]
+
+        response = client.post(
+            f"/resume-builder/{run_id}/respond", json={"answer": "irrelevant"}, headers=auth_headers
+        )
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(PipelineRun).filter(PipelineRun.user_id == other_user_id).delete()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()

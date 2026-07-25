@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models import AutofillDraft, JobListing, Resume
+from app.core.ownership import get_owned_resume
+from app.models import AutofillDraft, JobListing, User
 from app.schemas.autofill import AutofillDraftRequest, AutofillDraftResponse
 from app.schemas.resume import ResumeContent
 from app.services.autofill.detection import detect_ats_platform
@@ -14,15 +16,16 @@ router = APIRouter()
 
 @router.post("/{listing_id}/draft", response_model=AutofillDraftResponse, status_code=status.HTTP_201_CREATED)
 async def create_autofill_draft(
-    listing_id: int, body: AutofillDraftRequest, db: Session = Depends(get_db)
+    listing_id: int,
+    body: AutofillDraftRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> AutofillDraftResponse:
     listing = db.get(JobListing, listing_id)
     if listing is None:
         raise HTTPException(status_code=404, detail=f"Job listing {listing_id} not found")
 
-    resume = db.get(Resume, body.resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {body.resume_id} not found")
+    resume = get_owned_resume(body.resume_id, current_user, db)
 
     platform = detect_ats_platform(listing.url)
     if platform is None:

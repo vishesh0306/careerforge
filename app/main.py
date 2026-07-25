@@ -7,6 +7,7 @@ from redis import Redis
 from sqlalchemy import text
 
 from app.api.ats import router as ats_router
+from app.api.auth import router as auth_router
 from app.api.autofill import router as autofill_router
 from app.api.interview_prep import router as interview_prep_router
 from app.api.jobs import router as jobs_router
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CareerForge", lifespan=lifespan, docs_url="/careerForge")
 
+app.include_router(auth_router, prefix="/auth", tags=["auth"])
 app.include_router(resumes_router, prefix="/resumes", tags=["resumes"])
 app.include_router(resume_builder_router, prefix="/resume-builder", tags=["resume-builder"])
 app.include_router(ats_router, prefix="/ats", tags=["ats"])

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.db import SessionLocal
 from app.main import app
 from app.models import AutofillDraft, JobListing, Resume, User
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -69,7 +70,7 @@ def resume_and_listing():
 
 
 def test_create_autofill_draft_stores_result(resume_and_listing):
-    _, resume_id, listing_id = resume_and_listing
+    user_id, resume_id, listing_id = resume_and_listing
     fake_result = {
         "ats_platform": "greenhouse",
         "filled_fields": {"First Name": True, "Last Name": True, "Email": True, "Phone": True, "Resume": True},
@@ -77,7 +78,9 @@ def test_create_autofill_draft_stores_result(resume_and_listing):
     }
 
     with patch("app.api.autofill.run_autofill_draft", new=AsyncMock(return_value=fake_result)):
-        response = client.post(f"/autofill/{listing_id}/draft", json={"resume_id": resume_id})
+        response = client.post(
+            f"/autofill/{listing_id}/draft", json={"resume_id": resume_id}, headers=auth_headers_for(user_id)
+        )
 
     assert response.status_code == 201
     body = response.json()
@@ -95,33 +98,71 @@ def test_create_autofill_draft_stores_result(resume_and_listing):
 
 
 def test_create_autofill_draft_unsupported_platform_returns_400(resume_and_listing):
-    _, resume_id, listing_id = resume_and_listing
+    user_id, resume_id, listing_id = resume_and_listing
     session = SessionLocal()
     listing = session.get(JobListing, listing_id)
     listing.url = "https://example.com/careers/123"
     session.commit()
     session.close()
 
-    response = client.post(f"/autofill/{listing_id}/draft", json={"resume_id": resume_id})
+    response = client.post(
+        f"/autofill/{listing_id}/draft", json={"resume_id": resume_id}, headers=auth_headers_for(user_id)
+    )
     assert response.status_code == 400
 
 
-def test_create_autofill_draft_nonexistent_listing_returns_404():
-    response = client.post("/autofill/99999999/draft", json={"resume_id": 1})
+def test_create_autofill_draft_without_auth_returns_403(resume_and_listing):
+    _, resume_id, listing_id = resume_and_listing
+    response = client.post(f"/autofill/{listing_id}/draft", json={"resume_id": resume_id})
+    assert response.status_code == 403
+
+
+def test_create_autofill_draft_nonexistent_listing_returns_404(resume_and_listing):
+    user_id, resume_id, _ = resume_and_listing
+    response = client.post(
+        "/autofill/99999999/draft", json={"resume_id": resume_id}, headers=auth_headers_for(user_id)
+    )
     assert response.status_code == 404
 
 
 def test_create_autofill_draft_nonexistent_resume_returns_404(resume_and_listing):
-    _, _, listing_id = resume_and_listing
-    response = client.post(f"/autofill/{listing_id}/draft", json={"resume_id": 99999999})
+    user_id, _, listing_id = resume_and_listing
+    response = client.post(
+        f"/autofill/{listing_id}/draft", json={"resume_id": 99999999}, headers=auth_headers_for(user_id)
+    )
     assert response.status_code == 404
 
 
-def test_create_autofill_draft_handles_runner_failure_gracefully(resume_and_listing):
+def test_create_autofill_draft_resume_belonging_to_other_user_returns_404(resume_and_listing):
     _, resume_id, listing_id = resume_and_listing
+    session = SessionLocal()
+    other_user = User(email="phase10-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.post(
+            f"/autofill/{listing_id}/draft", json={"resume_id": resume_id}, headers=other_headers
+        )
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
+
+
+def test_create_autofill_draft_handles_runner_failure_gracefully(resume_and_listing):
+    user_id, resume_id, listing_id = resume_and_listing
 
     with patch("app.api.autofill.run_autofill_draft", new=AsyncMock(side_effect=RuntimeError("browser crashed"))):
-        response = client.post(f"/autofill/{listing_id}/draft", json={"resume_id": resume_id})
+        response = client.post(
+            f"/autofill/{listing_id}/draft", json={"resume_id": resume_id}, headers=auth_headers_for(user_id)
+        )
 
     assert response.status_code == 201
     body = response.json()

@@ -19,5 +19,9 @@ class Settings(BaseSettings):
     adzuna_app_key: str | None = None
     jsearch_rapidapi_key: str | None = None
 
+    jwt_secret_key: str = Field(min_length=32)
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24
+
 
 settings = Settings()

@@ -1,22 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
-from app.models import JDAnalysis, Resume
+from app.core.ownership import get_owned_resume
+from app.models import JDAnalysis, Resume, User
 from app.schemas.ats import ATSScoreResponse, ScoreAgainstJDRequest, ScoreAgainstRoleRequest
 from app.schemas.resume import ResumeContent
 from app.services.ats_scoring import score_resume_against_jd, synthesize_ideal_jd
 from app.services.llm_client import LLMError
 
 router = APIRouter()
-
-
-def _get_resume(resume_id: int, db: Session) -> Resume:
-    resume = db.get(Resume, resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {resume_id} not found")
-    return resume
 
 
 def _score_and_store(resume: Resume, jd_text: str, db: Session) -> ATSScoreResponse:
@@ -40,14 +35,18 @@ def _score_and_store(resume: Resume, jd_text: str, db: Session) -> ATSScoreRespo
 
 
 @router.post("/score-against-jd", response_model=ATSScoreResponse, status_code=status.HTTP_201_CREATED)
-def score_against_jd(body: ScoreAgainstJDRequest, db: Session = Depends(get_db)) -> ATSScoreResponse:
-    resume = _get_resume(body.resume_id, db)
+def score_against_jd(
+    body: ScoreAgainstJDRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> ATSScoreResponse:
+    resume = get_owned_resume(body.resume_id, current_user, db)
     return _score_and_store(resume, body.jd_text, db)
 
 
 @router.post("/score-against-role", response_model=ATSScoreResponse, status_code=status.HTTP_201_CREATED)
-def score_against_role(body: ScoreAgainstRoleRequest, db: Session = Depends(get_db)) -> ATSScoreResponse:
-    resume = _get_resume(body.resume_id, db)
+def score_against_role(
+    body: ScoreAgainstRoleRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> ATSScoreResponse:
+    resume = get_owned_resume(body.resume_id, current_user, db)
     try:
         jd_text = synthesize_ideal_jd(body.role, body.seniority)
     except LLMError as exc:

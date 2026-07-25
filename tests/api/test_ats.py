@@ -7,6 +7,7 @@ from app.core.db import SessionLocal
 from app.main import app
 from app.models import JDAnalysis, Resume, User
 from app.services.ats_scoring import JDTerms
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -49,7 +50,13 @@ def resume_with_user():
     session.close()
 
 
-def test_score_against_jd_stores_analysis_and_returns_breakdown(resume_with_user):
+@pytest.fixture()
+def auth_headers(resume_with_user):
+    user_id, _ = resume_with_user
+    return auth_headers_for(user_id)
+
+
+def test_score_against_jd_stores_analysis_and_returns_breakdown(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
     terms = JDTerms(must_have=["Python", "Kubernetes"], nice_to_have=["Docker"])
 
@@ -61,6 +68,7 @@ def test_score_against_jd_stores_analysis_and_returns_breakdown(resume_with_user
         response = client.post(
             "/ats/score-against-jd",
             json={"resume_id": resume_id, "jd_text": "Need Python and Kubernetes, Docker a plus."},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -80,7 +88,7 @@ def test_score_against_jd_stores_analysis_and_returns_breakdown(resume_with_user
     session.close()
 
 
-def test_score_against_jd_accepts_raw_newlines_in_json_string(resume_with_user):
+def test_score_against_jd_accepts_raw_newlines_in_json_string(resume_with_user, auth_headers):
     # Job descriptions are routinely pasted verbatim, with literal newlines, straight into the
     # jd_text field — that's not valid strict JSON (control chars must be escaped as \n), but
     # rejecting it would 422 every real-world request before our own validation even runs.
@@ -96,14 +104,16 @@ def test_score_against_jd_accepts_raw_newlines_in_json_string(resume_with_user):
         patch("app.services.ats_scoring.generate_fit_comment", return_value="Good fit."),
     ):
         response = client.post(
-            "/ats/score-against-jd", content=raw_body, headers={"Content-Type": "application/json"}
+            "/ats/score-against-jd",
+            content=raw_body,
+            headers={"Content-Type": "application/json", **auth_headers},
         )
 
     assert response.status_code == 201
     assert "Design scalable systems" in response.json()["jd_text"]
 
 
-def test_score_against_jd_penalizes_score_for_experience_gap(resume_with_user):
+def test_score_against_jd_penalizes_score_for_experience_gap(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
     session = SessionLocal()
     resume = session.get(Resume, resume_id)
@@ -127,6 +137,7 @@ def test_score_against_jd_penalizes_score_for_experience_gap(resume_with_user):
         response = client.post(
             "/ats/score-against-jd",
             json={"resume_id": resume_id, "jd_text": "Need Python, 5+ years experience."},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201
@@ -138,12 +149,43 @@ def test_score_against_jd_penalizes_score_for_experience_gap(resume_with_user):
     assert body["score"] < 100.0
 
 
-def test_score_against_jd_nonexistent_resume_returns_404():
-    response = client.post("/ats/score-against-jd", json={"resume_id": 99999999, "jd_text": "whatever"})
+def test_score_against_jd_nonexistent_resume_returns_404(auth_headers):
+    response = client.post(
+        "/ats/score-against-jd", json={"resume_id": 99999999, "jd_text": "whatever"}, headers=auth_headers
+    )
     assert response.status_code == 404
 
 
-def test_score_against_role_synthesizes_jd_then_scores(resume_with_user):
+def test_score_against_jd_resume_belonging_to_other_user_returns_404(resume_with_user):
+    _, resume_id = resume_with_user
+    session = SessionLocal()
+    other_user = User(email="phase6-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.post(
+            "/ats/score-against-jd", json={"resume_id": resume_id, "jd_text": "whatever"}, headers=other_headers
+        )
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
+
+
+def test_score_against_jd_without_auth_returns_403(resume_with_user):
+    _, resume_id = resume_with_user
+    response = client.post("/ats/score-against-jd", json={"resume_id": resume_id, "jd_text": "whatever"})
+    assert response.status_code == 403
+
+
+def test_score_against_role_synthesizes_jd_then_scores(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
     terms = JDTerms(must_have=["Python"], nice_to_have=[])
 
@@ -156,6 +198,7 @@ def test_score_against_role_synthesizes_jd_then_scores(resume_with_user):
         response = client.post(
             "/ats/score-against-role",
             json={"resume_id": resume_id, "role": "Backend Engineer", "seniority": "Mid-level"},
+            headers=auth_headers,
         )
 
     assert response.status_code == 201

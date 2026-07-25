@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.core.db import SessionLocal
 from app.main import app
 from app.models import JobSearchPref, PipelineRun, Resume, User
+from tests.conftest import auth_headers_for
 
 
 @pytest.fixture()
@@ -53,14 +54,19 @@ def resume_with_user():
     session.close()
 
 
-def test_start_job_search_creates_pref_and_queues_run(client, resume_with_user):
+@pytest.fixture()
+def auth_headers(resume_with_user):
+    user_id, _ = resume_with_user
+    return auth_headers_for(user_id)
+
+
+def test_start_job_search_creates_pref_and_queues_run(client, resume_with_user, auth_headers):
     user_id, resume_id = resume_with_user
 
     with patch.object(client.app.state.arq_pool, "enqueue_job", new=AsyncMock()) as mock_enqueue:
         response = client.post(
             "/jobs/search",
             json={
-                "user_id": user_id,
                 "resume_id": resume_id,
                 "role": "Backend Engineer",
                 "location": "Bangalore",
@@ -69,6 +75,7 @@ def test_start_job_search_creates_pref_and_queues_run(client, resume_with_user):
                 "experience_years": 1,
                 "expected_ctc": "15 LPA+",
             },
+            headers=auth_headers,
         )
 
     assert response.status_code == 202
@@ -88,23 +95,43 @@ def test_start_job_search_creates_pref_and_queues_run(client, resume_with_user):
     session.close()
 
 
-def test_start_job_search_nonexistent_user_returns_404(client, resume_with_user):
+def test_start_job_search_without_auth_returns_403(client, resume_with_user):
     _, resume_id = resume_with_user
+    response = client.post("/jobs/search", json={"resume_id": resume_id, "role": "Backend Engineer"})
+    assert response.status_code == 403
+
+
+def test_start_job_search_nonexistent_resume_returns_404(client, auth_headers):
     response = client.post(
-        "/jobs/search", json={"user_id": 99999999, "resume_id": resume_id, "role": "Backend Engineer"}
+        "/jobs/search", json={"resume_id": 99999999, "role": "Backend Engineer"}, headers=auth_headers
     )
     assert response.status_code == 404
 
 
-def test_start_job_search_nonexistent_resume_returns_404(client, resume_with_user):
-    user_id, _ = resume_with_user
-    response = client.post(
-        "/jobs/search", json={"user_id": user_id, "resume_id": 99999999, "role": "Backend Engineer"}
-    )
-    assert response.status_code == 404
+def test_start_job_search_resume_belonging_to_other_user_returns_404(client, resume_with_user):
+    _, resume_id = resume_with_user
+    session = SessionLocal()
+    other_user = User(email="phase8-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.post(
+            "/jobs/search", json={"resume_id": resume_id, "role": "Backend Engineer"}, headers=other_headers
+        )
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
 
 
-def test_get_results_before_ready_returns_empty_results(client, resume_with_user):
+def test_get_results_before_ready_returns_empty_results(client, resume_with_user, auth_headers):
     user_id, resume_id = resume_with_user
     session = SessionLocal()
     run = PipelineRun(
@@ -120,13 +147,46 @@ def test_get_results_before_ready_returns_empty_results(client, resume_with_user
     run_id = run.id
     session.close()
 
-    response = client.get(f"/jobs/search/{run_id}/results")
+    response = client.get(f"/jobs/search/{run_id}/results", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
     assert body["current_step"] == "SEARCH_QUEUED"
     assert body["results"] == []
 
 
-def test_get_results_nonexistent_run_returns_404(client):
-    response = client.get("/jobs/search/99999999/results")
+def test_get_results_nonexistent_run_returns_404(client, auth_headers):
+    response = client.get("/jobs/search/99999999/results", headers=auth_headers)
     assert response.status_code == 404
+
+
+def test_get_results_belonging_to_other_user_returns_404(client, resume_with_user):
+    user_id, resume_id = resume_with_user
+    session = SessionLocal()
+    run = PipelineRun(
+        user_id=user_id,
+        run_type="job_search",
+        current_step="SEARCH_QUEUED",
+        status="queued",
+        context={"resume_id": resume_id, "role": "Backend Engineer", "ranked_results": []},
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    run_id = run.id
+
+    other_user = User(email="phase8-other-results-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.get(f"/jobs/search/{run_id}/results", headers=other_headers)
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()

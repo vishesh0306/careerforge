@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
-from app.models import JobSearchPref, PipelineRun, Resume, User
+from app.core.ownership import get_owned_resume, get_owned_run
+from app.models import JobSearchPref, PipelineRun, User
 from app.schemas.job_search import JobSearchRequest, JobSearchResultsResponse, JobSearchStartResponse
 from app.workers.job_search_worker import run_job_search
 
@@ -13,17 +15,15 @@ RUN_TYPE = "job_search"
 
 @router.post("/search", response_model=JobSearchStartResponse, status_code=status.HTTP_202_ACCEPTED)
 async def start_job_search(
-    body: JobSearchRequest, request: Request, db: Session = Depends(get_db)
+    body: JobSearchRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> JobSearchStartResponse:
-    user = db.get(User, body.user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"User {body.user_id} not found")
-    resume = db.get(Resume, body.resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {body.resume_id} not found")
+    resume = get_owned_resume(body.resume_id, current_user, db)
 
     pref = JobSearchPref(
-        user_id=body.user_id,
+        user_id=current_user.id,
         role=body.role,
         experience_years=body.experience_years,
         location=body.location,
@@ -34,12 +34,12 @@ async def start_job_search(
     db.add(pref)
 
     run = PipelineRun(
-        user_id=body.user_id,
+        user_id=current_user.id,
         run_type=RUN_TYPE,
         current_step="SEARCH_QUEUED",
         status="queued",
         context={
-            "resume_id": body.resume_id,
+            "resume_id": resume.id,
             "role": body.role,
             "experience_years": body.experience_years,
             "location": body.location,
@@ -59,10 +59,10 @@ async def start_job_search(
 
 
 @router.get("/search/{run_id}/results", response_model=JobSearchResultsResponse)
-def get_job_search_results(run_id: int, db: Session = Depends(get_db)) -> JobSearchResultsResponse:
-    run = db.get(PipelineRun, run_id)
-    if run is None or run.run_type != RUN_TYPE:
-        raise HTTPException(status_code=404, detail=f"Job search run {run_id} not found")
+def get_job_search_results(
+    run_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> JobSearchResultsResponse:
+    run = get_owned_run(run_id, RUN_TYPE, current_user, db)
 
     context = run.context or {}
     return JobSearchResultsResponse(

@@ -7,6 +7,7 @@ from app.core.db import SessionLocal
 from app.main import app
 from app.models import InterviewPrep, JDAnalysis, Resume, User
 from app.services.interview_prep import InterviewPrepContent, InterviewQuestion
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -86,7 +87,7 @@ def jd_analysis_with_resume():
 
 
 def test_generate_prep_stores_and_returns_questions(jd_analysis_with_resume):
-    _, _, analysis_id = jd_analysis_with_resume
+    user_id, _, analysis_id = jd_analysis_with_resume
     fake_result = InterviewPrepContent(
         questions=[
             InterviewQuestion(
@@ -98,7 +99,7 @@ def test_generate_prep_stores_and_returns_questions(jd_analysis_with_resume):
     )
 
     with patch("app.services.interview_prep.llm_client.generate_structured", return_value=fake_result):
-        response = client.post(f"/interview-prep/{analysis_id}")
+        response = client.post(f"/interview-prep/{analysis_id}", headers=auth_headers_for(user_id))
 
     assert response.status_code == 201
     body = response.json()
@@ -118,13 +119,13 @@ def test_generate_prep_stores_and_returns_questions(jd_analysis_with_resume):
 
 
 def test_generate_prep_prompt_includes_gap_specifics(jd_analysis_with_resume):
-    _, _, analysis_id = jd_analysis_with_resume
+    user_id, _, analysis_id = jd_analysis_with_resume
     fake_result = InterviewPrepContent(
         questions=[InterviewQuestion(question="Q", why_asked="W", talking_points=["T"])]
     )
 
     with patch("app.services.interview_prep.llm_client.generate_structured", return_value=fake_result) as mock_llm:
-        client.post(f"/interview-prep/{analysis_id}")
+        client.post(f"/interview-prep/{analysis_id}", headers=auth_headers_for(user_id))
 
     prompt = mock_llm.call_args.args[0]
     assert "Kubernetes" in prompt
@@ -133,6 +134,34 @@ def test_generate_prep_prompt_includes_gap_specifics(jd_analysis_with_resume):
     assert "2.0" in prompt
 
 
-def test_generate_prep_nonexistent_jd_analysis_returns_404():
-    response = client.post("/interview-prep/99999999")
+def test_generate_prep_nonexistent_jd_analysis_returns_404(jd_analysis_with_resume):
+    user_id, _, _ = jd_analysis_with_resume
+    response = client.post("/interview-prep/99999999", headers=auth_headers_for(user_id))
     assert response.status_code == 404
+
+
+def test_generate_prep_without_auth_returns_403(jd_analysis_with_resume):
+    _, _, analysis_id = jd_analysis_with_resume
+    response = client.post(f"/interview-prep/{analysis_id}")
+    assert response.status_code == 403
+
+
+def test_generate_prep_belonging_to_other_user_returns_404(jd_analysis_with_resume):
+    _, _, analysis_id = jd_analysis_with_resume
+    session = SessionLocal()
+    other_user = User(email="phase9-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.post(f"/interview-prep/{analysis_id}", headers=other_headers)
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()

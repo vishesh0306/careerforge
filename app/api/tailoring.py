@@ -2,10 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.ownership import get_owned_resume, get_owned_run
 from app.graphs.jd_tailoring_graph import TailoringState, jd_tailoring_graph
-from app.models import JDAnalysis, PipelineRun, Resume
+from app.models import JDAnalysis, PipelineRun, Resume, User
 from app.schemas.resume import ResumeContent
 from app.schemas.tailoring import ConfirmGapsRequest, TailoringStartRequest, TailoringStateResponse
 from app.services.llm_client import LLMError
@@ -15,11 +17,8 @@ router = APIRouter()
 RUN_TYPE = "jd_tailoring"
 
 
-def _get_run(run_id: int, db: Session) -> PipelineRun:
-    run = db.get(PipelineRun, run_id)
-    if run is None or run.run_type != RUN_TYPE:
-        raise HTTPException(status_code=404, detail=f"Tailoring run {run_id} not found")
-    return run
+def _get_run(run_id: int, current_user: User, db: Session) -> PipelineRun:
+    return get_owned_run(run_id, RUN_TYPE, current_user, db)
 
 
 def _invoke_graph(state: TailoringState) -> TailoringState:
@@ -43,10 +42,10 @@ def _response(run: PipelineRun, state: TailoringState) -> TailoringStateResponse
 
 
 @router.post("/start", response_model=TailoringStateResponse, status_code=status.HTTP_201_CREATED)
-def start_tailoring(body: TailoringStartRequest, db: Session = Depends(get_db)) -> TailoringStateResponse:
-    resume = db.get(Resume, body.resume_id)
-    if resume is None:
-        raise HTTPException(status_code=404, detail=f"Resume {body.resume_id} not found")
+def start_tailoring(
+    body: TailoringStartRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> TailoringStateResponse:
+    resume = get_owned_resume(body.resume_id, current_user, db)
 
     state: TailoringState = {
         "resume_id": resume.id,
@@ -87,8 +86,13 @@ def start_tailoring(body: TailoringStartRequest, db: Session = Depends(get_db)) 
 
 
 @router.post("/{run_id}/confirm-gaps", response_model=TailoringStateResponse)
-def confirm_gaps(run_id: int, body: ConfirmGapsRequest, db: Session = Depends(get_db)) -> TailoringStateResponse:
-    run = _get_run(run_id, db)
+def confirm_gaps(
+    run_id: int,
+    body: ConfirmGapsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TailoringStateResponse:
+    run = _get_run(run_id, current_user, db)
     if run.current_step != "AWAITING_GAP_CONFIRM":
         raise HTTPException(
             status_code=409,
@@ -155,7 +159,9 @@ def confirm_gaps(run_id: int, body: ConfirmGapsRequest, db: Session = Depends(ge
 
 
 @router.get("/{run_id}/result", response_model=TailoringStateResponse)
-def get_tailoring_result(run_id: int, db: Session = Depends(get_db)) -> TailoringStateResponse:
-    run = _get_run(run_id, db)
+def get_tailoring_result(
+    run_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> TailoringStateResponse:
+    run = _get_run(run_id, current_user, db)
     state: TailoringState = run.context  # type: ignore[assignment]
     return _response(run, state)

@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.auth import get_current_user
 from app.core.db import get_db
 from app.core.errors import llm_error_response
+from app.core.ownership import get_owned_resume, get_owned_run
 from app.graphs.jd_tailoring_graph import tailor_resume
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
 from app.models import InterviewPrep, JDAnalysis, JobListing, JobSearchPref, PipelineRun, Resume, User
@@ -19,23 +21,19 @@ router = APIRouter()
 RUN_TYPE = "full_pipeline"
 
 
-def _get_run(run_id: int, db: Session) -> PipelineRun:
-    run = db.get(PipelineRun, run_id)
-    if run is None or run.run_type != RUN_TYPE:
-        raise HTTPException(status_code=404, detail=f"Pipeline run {run_id} not found")
-    return run
+def _get_run(run_id: int, current_user: User, db: Session) -> PipelineRun:
+    return get_owned_run(run_id, RUN_TYPE, current_user, db)
 
 
 @router.post("/run", response_model=PipelineStatusResponse, status_code=status.HTTP_201_CREATED)
 async def start_pipeline(
-    body: PipelineStartRequest, request: Request, db: Session = Depends(get_db)
+    body: PipelineStartRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> PipelineStatusResponse:
-    user = db.get(User, body.user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"User {body.user_id} not found")
-
     context = {
-        "user_id": body.user_id,
+        "user_id": current_user.id,
         "target_field": body.target_field,
         "emphasis_focus": body.emphasis_focus,
         "job_search_prefs": {
@@ -54,13 +52,7 @@ async def start_pipeline(
     }
 
     if body.base_resume_id is not None:
-        base_resume = db.get(Resume, body.base_resume_id)
-        if base_resume is None:
-            raise HTTPException(status_code=404, detail=f"Resume {body.base_resume_id} not found")
-        if base_resume.user_id != body.user_id:
-            raise HTTPException(
-                status_code=400, detail=f"Resume {body.base_resume_id} does not belong to user {body.user_id}"
-            )
+        base_resume = get_owned_resume(body.base_resume_id, current_user, db)
         context["resume_id"] = base_resume.id
         current_step = "SEARCHING_JOBS"
         run_status = "in_progress"
@@ -85,7 +77,7 @@ async def start_pipeline(
             raise llm_error_response(exc, "Resume builder") from exc
 
         builder_run = PipelineRun(
-            user_id=body.user_id,
+            user_id=current_user.id,
             run_type="resume_builder",
             current_step=builder_state["status"],
             status="completed" if builder_state["status"] == "FINALIZED" else "awaiting_input",
@@ -97,7 +89,9 @@ async def start_pipeline(
         current_step = "AWAITING_RESUME"
         run_status = "awaiting_input"
 
-    run = PipelineRun(user_id=body.user_id, run_type=RUN_TYPE, current_step=current_step, status=run_status, context=context)
+    run = PipelineRun(
+        user_id=current_user.id, run_type=RUN_TYPE, current_step=current_step, status=run_status, context=context
+    )
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -109,8 +103,10 @@ async def start_pipeline(
 
 
 @router.get("/{run_id}/status", response_model=PipelineStatusResponse)
-async def get_pipeline_status(run_id: int, request: Request, db: Session = Depends(get_db)) -> PipelineStatusResponse:
-    run = _get_run(run_id, db)
+async def get_pipeline_status(
+    run_id: int, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> PipelineStatusResponse:
+    run = _get_run(run_id, current_user, db)
     await _try_advance(run, db, request)
     return _status_response(run, db)
 

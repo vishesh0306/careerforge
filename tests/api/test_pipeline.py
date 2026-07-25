@@ -9,6 +9,7 @@ from app.main import app
 from app.models import InterviewPrep, JDAnalysis, JobListing, JobSearchPref, PipelineRun, Resume, User
 from app.schemas.resume import ContactInfo, ResumeContent
 from app.services.ats_scoring import JDTerms
+from tests.conftest import auth_headers_for
 
 RESUME_CONTENT = {
     "contact": {"name": "Pipeline Test", "email": "pt@example.com", "phone": "", "location": "", "links": []},
@@ -61,8 +62,14 @@ def user_with_resume():
     session.close()
 
 
-def _base_body(user_id, **overrides):
-    body = {"user_id": user_id, "target_field": "Backend Engineer", "top_n_to_tailor": 1}
+@pytest.fixture()
+def auth_headers(user_with_resume):
+    user_id, _ = user_with_resume
+    return auth_headers_for(user_id)
+
+
+def _base_body(**overrides):
+    body = {"target_field": "Backend Engineer", "top_n_to_tailor": 1}
     body.update(overrides)
     return body
 
@@ -70,25 +77,22 @@ def _base_body(user_id, **overrides):
 # --- validation ---
 
 
-def test_start_requires_base_resume_id_or_self_description(client, user_with_resume):
-    user_id, _ = user_with_resume
-    response = client.post("/pipeline/run", json=_base_body(user_id))
+def test_start_requires_base_resume_id_or_self_description(client, user_with_resume, auth_headers):
+    response = client.post("/pipeline/run", json=_base_body(), headers=auth_headers)
     assert response.status_code == 422
 
 
-def test_start_nonexistent_user_returns_404(client):
-    response = client.post("/pipeline/run", json=_base_body(99999999, base_resume_id=1))
+def test_start_without_auth_returns_403(client):
+    response = client.post("/pipeline/run", json=_base_body(base_resume_id=1))
+    assert response.status_code == 403
+
+
+def test_start_with_nonexistent_base_resume_returns_404(client, user_with_resume, auth_headers):
+    response = client.post("/pipeline/run", json=_base_body(base_resume_id=99999999), headers=auth_headers)
     assert response.status_code == 404
 
 
-def test_start_with_nonexistent_base_resume_returns_404(client, user_with_resume):
-    user_id, _ = user_with_resume
-    response = client.post("/pipeline/run", json=_base_body(user_id, base_resume_id=99999999))
-    assert response.status_code == 404
-
-
-def test_start_with_base_resume_belonging_to_other_user_returns_400(client, user_with_resume):
-    user_id, _ = user_with_resume
+def test_start_with_base_resume_belonging_to_other_user_returns_404(client, user_with_resume, auth_headers):
     session = SessionLocal()
     other_user = User(email="pipeline-other-pytest@example.com", hashed_password="hashed")
     session.add(other_user)
@@ -102,8 +106,10 @@ def test_start_with_base_resume_belonging_to_other_user_returns_400(client, user
     session.close()
 
     try:
-        response = client.post("/pipeline/run", json=_base_body(user_id, base_resume_id=other_resume_id))
-        assert response.status_code == 400
+        response = client.post(
+            "/pipeline/run", json=_base_body(base_resume_id=other_resume_id), headers=auth_headers
+        )
+        assert response.status_code == 404
     finally:
         session = SessionLocal()
         session.query(Resume).filter(Resume.user_id == other_user_id).delete()
@@ -112,19 +118,48 @@ def test_start_with_base_resume_belonging_to_other_user_returns_400(client, user
         session.close()
 
 
-def test_status_nonexistent_run_returns_404(client):
-    response = client.get("/pipeline/99999999/status")
+def test_status_nonexistent_run_returns_404(client, user_with_resume, auth_headers):
+    response = client.get("/pipeline/99999999/status", headers=auth_headers)
     assert response.status_code == 404
+
+
+def test_status_belonging_to_other_user_returns_404(client, user_with_resume, auth_headers):
+    session = SessionLocal()
+    other_user = User(email="pipeline-status-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_user_id = other_user.id
+    session.close()
+
+    with patch.object(client.app.state.arq_pool, "enqueue_job", new=AsyncMock()):
+        start_response = client.post(
+            "/pipeline/run",
+            json=_base_body(base_resume_id=user_with_resume[1]),
+            headers=auth_headers,
+        )
+    run_id = start_response.json()["run_id"]
+
+    try:
+        response = client.get(f"/pipeline/{run_id}/status", headers=auth_headers_for(other_user_id))
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
 
 
 # --- start: with base_resume_id skips straight to job search ---
 
 
-def test_start_with_base_resume_id_immediately_queues_job_search(client, user_with_resume):
+def test_start_with_base_resume_id_immediately_queues_job_search(client, user_with_resume, auth_headers):
     user_id, resume_id = user_with_resume
 
     with patch.object(client.app.state.arq_pool, "enqueue_job", new=AsyncMock()) as mock_enqueue:
-        response = client.post("/pipeline/run", json=_base_body(user_id, base_resume_id=resume_id))
+        response = client.post(
+            "/pipeline/run", json=_base_body(base_resume_id=resume_id), headers=auth_headers
+        )
 
     assert response.status_code == 201
     body = response.json()
@@ -142,15 +177,14 @@ def test_start_with_base_resume_id_immediately_queues_job_search(client, user_wi
 # --- start: without base_resume_id starts the resume builder ---
 
 
-def test_start_without_base_resume_id_starts_resume_builder(client, user_with_resume):
-    user_id, _ = user_with_resume
-    body = _base_body(user_id, self_description="I've been a backend engineer for 3 years.")
+def test_start_without_base_resume_id_starts_resume_builder(client, user_with_resume, auth_headers):
+    body = _base_body(self_description="I've been a backend engineer for 3 years.")
 
     with patch(
         "app.graphs.resume_builder_graph.llm_client.generate_structured",
         return_value=AssessmentResult(ready_to_draft=False, clarifying_question="Which company?"),
     ):
-        response = client.post("/pipeline/run", json=body)
+        response = client.post("/pipeline/run", json=body, headers=auth_headers)
 
     assert response.status_code == 201
     resp_body = response.json()
@@ -168,7 +202,7 @@ def test_start_without_base_resume_id_starts_resume_builder(client, user_with_re
 # --- status: stage transitions via direct sub-run manipulation ---
 
 
-def test_status_reports_waiting_while_builder_not_finalized(client, user_with_resume):
+def test_status_reports_waiting_while_builder_not_finalized(client, user_with_resume, auth_headers):
     user_id, _ = user_with_resume
     session = SessionLocal()
     builder_run = PipelineRun(
@@ -194,14 +228,14 @@ def test_status_reports_waiting_while_builder_not_finalized(client, user_with_re
     run_id = pipeline_run.id
     session.close()
 
-    response = client.get(f"/pipeline/{run_id}/status")
+    response = client.get(f"/pipeline/{run_id}/status", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
     assert body["current_step"] == "AWAITING_RESUME"
     assert str(builder_run_id) in body["message"]
 
 
-def test_status_advances_to_searching_jobs_once_builder_finalized(client, user_with_resume):
+def test_status_advances_to_searching_jobs_once_builder_finalized(client, user_with_resume, auth_headers):
     user_id, resume_id = user_with_resume
     session = SessionLocal()
     builder_run = PipelineRun(
@@ -228,7 +262,7 @@ def test_status_advances_to_searching_jobs_once_builder_finalized(client, user_w
     session.close()
 
     with patch.object(client.app.state.arq_pool, "enqueue_job", new=AsyncMock()) as mock_enqueue:
-        response = client.get(f"/pipeline/{run_id}/status")
+        response = client.get(f"/pipeline/{run_id}/status", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -238,7 +272,7 @@ def test_status_advances_to_searching_jobs_once_builder_finalized(client, user_w
     mock_enqueue.assert_awaited_once()
 
 
-def test_status_marks_pipeline_failed_when_job_search_fails(client, user_with_resume):
+def test_status_marks_pipeline_failed_when_job_search_fails(client, user_with_resume, auth_headers):
     user_id, resume_id = user_with_resume
     session = SessionLocal()
     job_search_run = PipelineRun(
@@ -263,7 +297,7 @@ def test_status_marks_pipeline_failed_when_job_search_fails(client, user_with_re
     run_id = pipeline_run.id
     session.close()
 
-    response = client.get(f"/pipeline/{run_id}/status")
+    response = client.get(f"/pipeline/{run_id}/status", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
     assert body["current_step"] == "FAILED"
@@ -273,7 +307,7 @@ def test_status_marks_pipeline_failed_when_job_search_fails(client, user_with_re
 # --- status: full shortlist tailoring stage ---
 
 
-def test_status_builds_tailored_shortlist_once_job_search_completes(client, user_with_resume):
+def test_status_builds_tailored_shortlist_once_job_search_completes(client, user_with_resume, auth_headers):
     user_id, resume_id = user_with_resume
     session = SessionLocal()
     listing = JobListing(
@@ -286,7 +320,7 @@ def test_status_builds_tailored_shortlist_once_job_search_completes(client, user
     listing_db_id = listing.id
 
     try:
-        _assert_shortlist_built_correctly(client, user_id, resume_id, listing, session)
+        _assert_shortlist_built_correctly(client, user_id, resume_id, listing, session, auth_headers)
     finally:
         cleanup_session = SessionLocal()
         cleanup_session.query(JobListing).filter(JobListing.id == listing_db_id).delete()
@@ -294,7 +328,7 @@ def test_status_builds_tailored_shortlist_once_job_search_completes(client, user
         cleanup_session.close()
 
 
-def _assert_shortlist_built_correctly(client, user_id, resume_id, listing, session):
+def _assert_shortlist_built_correctly(client, user_id, resume_id, listing, session, auth_headers):
     job_search_run = PipelineRun(
         user_id=user_id, run_type="job_search", current_step="RESULTS_READY", status="completed",
         context={
@@ -354,7 +388,7 @@ def _assert_shortlist_built_correctly(client, user_id, resume_id, listing, sessi
         patch("app.services.ats_scoring.extract_candidate_years_experience", return_value=3.0),
         patch("app.services.llm_client.llm_client.generate_structured", side_effect=dispatch_generate_structured),
     ):
-        response = client.get(f"/pipeline/{run_id}/status")
+        response = client.get(f"/pipeline/{run_id}/status", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()

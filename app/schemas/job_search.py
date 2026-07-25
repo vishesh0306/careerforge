@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class JobSearchRequest(BaseModel):
-    user_id: int
     resume_id: int
     role: str = Field(
         ...,

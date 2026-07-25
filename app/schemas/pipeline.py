@@ -4,12 +4,11 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class PipelineStartRequest(BaseModel):
-    user_id: int
     target_field: str = Field(..., description="Target role — used for resume building (if needed) and job search.")
 
     base_resume_id: Optional[int] = Field(
         None,
-        description="Use this existing resume instead of building a new one. Must belong to user_id. "
+        description="Use this existing resume instead of building a new one. Must belong to you. "
         "If omitted, self_description is required and a new resume is built first.",
     )
     self_description: Optional[str] = Field(

@@ -6,7 +6,6 @@ from app.schemas.resume import ResumeContent
 
 
 class StartRequest(BaseModel):
-    user_id: int
     target_field: str
     self_description: str = Field(
         ...,
@@ -16,9 +15,8 @@ class StartRequest(BaseModel):
     )
     base_resume_id: Optional[int] = Field(
         None,
-        description="Optional — an existing resume (yours) to build from instead of starting from scratch. "
-        "The builder updates/extends it based on the conversation, preserving what's still accurate. "
-        "Must belong to user_id.",
+        description="Optional — an existing resume of yours to build from instead of starting from scratch. "
+        "The builder updates/extends it based on the conversation, preserving what's still accurate.",
     )
     emphasis_focus: Optional[str] = Field(
         None,

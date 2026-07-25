@@ -5,6 +5,7 @@ from app.core.db import SessionLocal
 from app.main import app
 from app.models import Resume, User
 from fastapi.testclient import TestClient
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -75,8 +76,8 @@ def resume_with_user():
 
 
 def test_download_pdf_returns_valid_pdf_with_extractable_text(resume_with_user, tmp_path):
-    _, resume_id = resume_with_user
-    response = client.get(f"/resumes/{resume_id}/pdf")
+    user_id, resume_id = resume_with_user
+    response = client.get(f"/resumes/{resume_id}/pdf", headers=auth_headers_for(user_id))
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
@@ -96,13 +97,34 @@ def test_download_pdf_returns_valid_pdf_with_extractable_text(resume_with_user, 
     assert "Winner, Some Hackathon" in text
 
 
-def test_download_pdf_for_nonexistent_resume_returns_404():
-    response = client.get("/resumes/99999999/pdf")
+def test_download_pdf_for_nonexistent_resume_returns_404(resume_with_user):
+    user_id, _ = resume_with_user
+    response = client.get("/resumes/99999999/pdf", headers=auth_headers_for(user_id))
     assert response.status_code == 404
 
 
-def test_download_pdf_handles_missing_optional_sections(resume_with_user):
+def test_download_pdf_belonging_to_other_user_returns_404(resume_with_user):
     _, resume_id = resume_with_user
-    response = client.get(f"/resumes/{resume_id}/pdf")
+    session = SessionLocal()
+    other_user = User(email="phase5-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.get(f"/resumes/{resume_id}/pdf", headers=auth_headers_for(other_user_id))
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
+
+
+def test_download_pdf_handles_missing_optional_sections(resume_with_user):
+    user_id, resume_id = resume_with_user
+    response = client.get(f"/resumes/{resume_id}/pdf", headers=auth_headers_for(user_id))
     assert response.status_code == 200
     assert response.content[:4] == b"%PDF"

@@ -8,6 +8,7 @@ from app.main import app
 from app.models import JDAnalysis, PipelineRun, Resume, User
 from app.schemas.resume import ContactInfo, ResumeContent
 from app.services.ats_scoring import ATSScoreResult
+from tests.conftest import auth_headers_for
 
 client = TestClient(app)
 
@@ -70,7 +71,13 @@ def resume_with_user():
     session.close()
 
 
-def test_start_tailoring_returns_gaps_and_baseline_score(resume_with_user):
+@pytest.fixture()
+def auth_headers(resume_with_user):
+    user_id, _ = resume_with_user
+    return auth_headers_for(user_id)
+
+
+def test_start_tailoring_returns_gaps_and_baseline_score(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
 
     with (
@@ -80,7 +87,9 @@ def test_start_tailoring_returns_gaps_and_baseline_score(resume_with_user):
             return_value={"Kubernetes": "The JD requires production Kubernetes experience."},
         ),
     ):
-        response = client.post("/tailoring/start", json={"resume_id": resume_id, "jd_text": "Need Kubernetes."})
+        response = client.post(
+            "/tailoring/start", json={"resume_id": resume_id, "jd_text": "Need Kubernetes."}, headers=auth_headers
+        )
 
     assert response.status_code == 201
     body = response.json()
@@ -104,12 +113,43 @@ def test_start_tailoring_returns_gaps_and_baseline_score(resume_with_user):
     session.close()
 
 
-def test_start_tailoring_nonexistent_resume_returns_404():
-    response = client.post("/tailoring/start", json={"resume_id": 99999999, "jd_text": "whatever"})
+def test_start_tailoring_nonexistent_resume_returns_404(auth_headers):
+    response = client.post(
+        "/tailoring/start", json={"resume_id": 99999999, "jd_text": "whatever"}, headers=auth_headers
+    )
     assert response.status_code == 404
 
 
-def _start_run(resume_id: int) -> int:
+def test_start_tailoring_without_auth_returns_403(resume_with_user):
+    _, resume_id = resume_with_user
+    response = client.post("/tailoring/start", json={"resume_id": resume_id, "jd_text": "whatever"})
+    assert response.status_code == 403
+
+
+def test_start_tailoring_resume_belonging_to_other_user_returns_404(resume_with_user):
+    _, resume_id = resume_with_user
+    session = SessionLocal()
+    other_user = User(email="phase7-other-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.post(
+            "/tailoring/start", json={"resume_id": resume_id, "jd_text": "whatever"}, headers=other_headers
+        )
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
+
+
+def _start_run(resume_id: int, auth_headers: dict) -> int:
     with (
         patch("app.graphs.jd_tailoring_graph.score_resume_against_jd", return_value=WEAK_SCORE),
         patch(
@@ -117,13 +157,15 @@ def _start_run(resume_id: int) -> int:
             return_value={"Kubernetes": "The JD requires production Kubernetes experience."},
         ),
     ):
-        response = client.post("/tailoring/start", json={"resume_id": resume_id, "jd_text": "Need Kubernetes."})
+        response = client.post(
+            "/tailoring/start", json={"resume_id": resume_id, "jd_text": "Need Kubernetes."}, headers=auth_headers
+        )
     return response.json()["run_id"]
 
 
-def test_confirm_gaps_with_confirmed_gap_creates_new_tailored_resume(resume_with_user):
+def test_confirm_gaps_with_confirmed_gap_creates_new_tailored_resume(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
-    run_id = _start_run(resume_id)
+    run_id = _start_run(resume_id, auth_headers)
 
     tailored_content = ResumeContent.model_validate(BASE_RESUME)
     tailored_content.skills.tools.append("Kubernetes")
@@ -135,6 +177,7 @@ def test_confirm_gaps_with_confirmed_gap_creates_new_tailored_resume(resume_with
         response = client.post(
             "/tailoring/{}/confirm-gaps".format(run_id),
             json={"confirmations": [{"term": "Kubernetes", "confirmed": True, "detail": "Ran a 6-node cluster."}]},
+            headers=auth_headers,
         )
 
     assert response.status_code == 200
@@ -157,14 +200,15 @@ def test_confirm_gaps_with_confirmed_gap_creates_new_tailored_resume(resume_with
     session.close()
 
 
-def test_confirm_gaps_all_declined_short_circuits_without_llm_tailor_call(resume_with_user):
+def test_confirm_gaps_all_declined_short_circuits_without_llm_tailor_call(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
-    run_id = _start_run(resume_id)
+    run_id = _start_run(resume_id, auth_headers)
 
     with patch("app.graphs.jd_tailoring_graph.tailor_resume") as mock_tailor:
         response = client.post(
             "/tailoring/{}/confirm-gaps".format(run_id),
             json={"confirmations": [{"term": "Kubernetes", "confirmed": False}]},
+            headers=auth_headers,
         )
 
     assert response.status_code == 200
@@ -174,7 +218,7 @@ def test_confirm_gaps_all_declined_short_circuits_without_llm_tailor_call(resume
     mock_tailor.assert_not_called()
 
 
-def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resume_with_user):
+def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resume_with_user, auth_headers):
     """Critical regression check: a candidate who already has the skill (no gaps to
     confirm) but wants emphasis reordering must still trigger regeneration — this is
     exactly the multi-stack-candidate scenario the emphasis_focus field exists for."""
@@ -187,6 +231,7 @@ def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resu
         start_response = client.post(
             "/tailoring/start",
             json={"resume_id": resume_id, "jd_text": "Need Python.", "emphasis_focus": "Django"},
+            headers=auth_headers,
         )
     run_id = start_response.json()["run_id"]
     assert start_response.json()["gaps"] == []
@@ -198,7 +243,9 @@ def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resu
         patch("app.graphs.jd_tailoring_graph.tailor_resume", return_value=reordered) as mock_tailor,
         patch("app.graphs.jd_tailoring_graph.score_resume_against_jd", return_value=STRONG_SCORE),
     ):
-        response = client.post(f"/tailoring/{run_id}/confirm-gaps", json={"confirmations": []})
+        response = client.post(
+            f"/tailoring/{run_id}/confirm-gaps", json={"confirmations": []}, headers=auth_headers
+        )
 
     assert response.status_code == 200
     body = response.json()
@@ -212,42 +259,68 @@ def test_confirm_gaps_emphasis_focus_still_tailors_with_zero_confirmed_gaps(resu
     session.close()
 
 
-def test_confirm_gaps_wrong_state_returns_409(resume_with_user):
+def test_confirm_gaps_wrong_state_returns_409(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
-    run_id = _start_run(resume_id)
+    run_id = _start_run(resume_id, auth_headers)
 
     with patch("app.graphs.jd_tailoring_graph.tailor_resume", return_value=ResumeContent.model_validate(BASE_RESUME)):
         with patch("app.graphs.jd_tailoring_graph.score_resume_against_jd", return_value=STRONG_SCORE):
             client.post(
                 "/tailoring/{}/confirm-gaps".format(run_id),
                 json={"confirmations": [{"term": "Kubernetes", "confirmed": True}]},
+                headers=auth_headers,
             )
 
     # Second call should now fail — run is already RESCORED.
     response = client.post(
         "/tailoring/{}/confirm-gaps".format(run_id),
         json={"confirmations": [{"term": "Kubernetes", "confirmed": True}]},
+        headers=auth_headers,
     )
     assert response.status_code == 409
 
 
-def test_confirm_gaps_unknown_term_returns_400(resume_with_user):
+def test_confirm_gaps_unknown_term_returns_400(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
-    run_id = _start_run(resume_id)
+    run_id = _start_run(resume_id, auth_headers)
 
     response = client.post(
         "/tailoring/{}/confirm-gaps".format(run_id),
         json={"confirmations": [{"term": "SomethingNotInGapsList", "confirmed": True}]},
+        headers=auth_headers,
     )
     assert response.status_code == 400
 
 
-def test_get_result_reflects_persisted_state(resume_with_user):
+def test_get_result_reflects_persisted_state(resume_with_user, auth_headers):
     _, resume_id = resume_with_user
-    run_id = _start_run(resume_id)
+    run_id = _start_run(resume_id, auth_headers)
 
-    response = client.get(f"/tailoring/{run_id}/result")
+    response = client.get(f"/tailoring/{run_id}/result", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "AWAITING_GAP_CONFIRM"
     assert body["run_id"] == run_id
+
+
+def test_get_result_belonging_to_other_user_returns_404(resume_with_user, auth_headers):
+    _, resume_id = resume_with_user
+    run_id = _start_run(resume_id, auth_headers)
+
+    session = SessionLocal()
+    other_user = User(email="phase7-other-result-pytest@example.com", hashed_password="hashed")
+    session.add(other_user)
+    session.commit()
+    session.refresh(other_user)
+    other_headers = auth_headers_for(other_user.id)
+    other_user_id = other_user.id
+    session.close()
+
+    try:
+        response = client.get(f"/tailoring/{run_id}/result", headers=other_headers)
+        assert response.status_code == 404
+    finally:
+        session = SessionLocal()
+        session.query(User).filter(User.id == other_user_id).delete()
+        session.commit()
+        session.close()
