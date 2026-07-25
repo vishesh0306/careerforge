@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.errors import llm_error_response
 from app.models import JDAnalysis, Resume
 from app.schemas.ats import ATSScoreResponse, ScoreAgainstJDRequest, ScoreAgainstRoleRequest
 from app.schemas.resume import ResumeContent
@@ -23,7 +24,7 @@ def _score_and_store(resume: Resume, jd_text: str, db: Session) -> ATSScoreRespo
     try:
         result = score_resume_against_jd(content, jd_text)
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"ATS scoring failed: {exc}") from exc
+        raise llm_error_response(exc, "ATS scoring") from exc
 
     analysis = JDAnalysis(
         resume_id=resume.id,
@@ -50,5 +51,5 @@ def score_against_role(body: ScoreAgainstRoleRequest, db: Session = Depends(get_
     try:
         jd_text = synthesize_ideal_jd(body.role, body.seniority)
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to synthesize role JD: {exc}") from exc
+        raise llm_error_response(exc, "Role JD synthesis") from exc
     return _score_and_store(resume, jd_text, db)

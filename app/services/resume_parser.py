@@ -4,7 +4,7 @@ import pdfplumber
 from docx import Document
 
 from app.schemas.resume import ResumeContent
-from app.services.llm_client import LLMError, llm_client
+from app.services.llm_client import llm_client
 
 RESUME_EXTRACTION_PROMPT = """You are extracting structured resume data from the raw resume text below.
 
@@ -85,8 +85,10 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 
 
 def parse_resume_text(text: str) -> ResumeContent:
+    # Deliberately does not catch LLMError here — a failure at this point (quota exhaustion, an
+    # unusable AI response) is an AI-service problem, not a problem with the candidate's file, and
+    # ResumeParsingError (-> 400 Bad Request) would misreport it as one. Let it propagate to the
+    # API layer's own LLMError handling, which distinguishes quota exhaustion (503) from other
+    # failures (502).
     prompt = RESUME_EXTRACTION_PROMPT.format(text=text)
-    try:
-        return llm_client.generate_structured(prompt, ResumeContent)
-    except LLMError as exc:
-        raise ResumeParsingError(f"Failed to parse resume content: {exc}") from exc
+    return llm_client.generate_structured(prompt, ResumeContent)

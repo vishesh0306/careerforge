@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.db import get_db
+from app.core.errors import llm_error_response
 from app.graphs.jd_tailoring_graph import TailoringState, jd_tailoring_graph
 from app.models import JDAnalysis, PipelineRun, Resume
 from app.schemas.resume import ResumeContent
@@ -25,7 +26,7 @@ def _invoke_graph(state: TailoringState) -> TailoringState:
     try:
         return jd_tailoring_graph.invoke(state)
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Tailoring LLM call failed: {exc}") from exc
+        raise llm_error_response(exc, "Tailoring") from exc
 
 
 def _response(run: PipelineRun, state: TailoringState) -> TailoringStateResponse:

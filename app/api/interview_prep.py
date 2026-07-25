@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.errors import llm_error_response
 from app.models import InterviewPrep, JDAnalysis, Resume
 from app.schemas.interview_prep import InterviewPrepResponse
 from app.schemas.resume import ResumeContent
@@ -25,7 +26,7 @@ def generate_prep_for_jd_analysis(jd_analysis_id: int, db: Session = Depends(get
     try:
         result = generate_interview_prep(content, analysis.jd_text, analysis.breakdown)
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Interview prep generation failed: {exc}") from exc
+        raise llm_error_response(exc, "Interview prep generation") from exc
 
     prep = InterviewPrep(
         jd_analysis_id=jd_analysis_id,

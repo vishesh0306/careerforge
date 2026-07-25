@@ -91,6 +91,29 @@ def test_upload_valid_docx_stores_structured_resume(test_user):
     assert body["parent_resume_id"] is None
 
 
+def test_upload_returns_503_not_400_when_gemini_quota_exhausted(test_user):
+    # Quota exhaustion is an AI-service availability problem, not a problem with the candidate's
+    # file — it must not be misreported as a 400 Bad Request (ResumeParsingError's status code).
+    from app.services.llm_client import LLMQuotaExhaustedError
+
+    quota_error = LLMQuotaExhaustedError("All 2 configured Gemini API key(s) are currently rate-limited.")
+    with patch("app.services.resume_parser.llm_client.generate_structured", side_effect=quota_error):
+        with open("tests/fixtures/sample_resume.docx", "rb") as f:
+            response = client.post(
+                f"/resumes/upload?user_id={test_user}",
+                files={
+                    "file": (
+                        "resume.docx",
+                        f,
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    )
+                },
+            )
+
+    assert response.status_code == 503
+    assert "temporarily unavailable" in response.json()["detail"]
+
+
 def test_list_resumes_returns_all_resumes_for_user(test_user):
     fake_content = ResumeContent(contact=ContactInfo(name="Test Person"))
 

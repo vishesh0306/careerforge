@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.db import get_db
+from app.core.errors import llm_error_response
 from app.graphs.resume_builder_graph import BuilderState, resume_builder_graph
 from app.models import PipelineRun, Resume, User
 from app.schemas.resume import ResumeContent, ResumeContentPatch, merge_resume_patch
@@ -49,7 +50,7 @@ def _invoke_graph(state: BuilderState) -> BuilderState:
     try:
         return resume_builder_graph.invoke(state)
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Resume builder LLM call failed: {exc}") from exc
+        raise llm_error_response(exc, "Resume builder") from exc
 
 
 @router.post("/start", response_model=BuilderStateResponse, status_code=status.HTTP_201_CREATED)

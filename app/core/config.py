@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     gemini_api_key: str = Field(min_length=1)
+    # Optional — tried in order after gemini_api_key when a call hits a rate-limit/quota error,
+    # so a second free-tier key roughly doubles the effective daily ceiling.
+    gemini_api_key_2: str | None = None
 
     # Optional — job search sources that need a key degrade gracefully (skip themselves)
     # when these are unset, rather than failing the whole search.

@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.errors import llm_error_response
 from app.models import Resume, User
 from app.schemas.resume import ResumeContent, ResumeContentPatch, ResumeResponse, merge_resume_patch
 from app.services.llm_client import LLMError
@@ -47,7 +48,7 @@ async def upload_resume(
     except ResumeParsingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LLMError as exc:
-        raise HTTPException(status_code=502, detail=f"Resume parsing service failed: {exc}") from exc
+        raise llm_error_response(exc, "Resume parsing") from exc
 
     resume = Resume(
         user_id=user_id,
