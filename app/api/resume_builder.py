@@ -82,6 +82,7 @@ def start_resume_builder(body: StartRequest, db: Session = Depends(get_db)) -> B
         "base_resume_id": body.base_resume_id,
         "emphasis_focus": body.emphasis_focus,
         "captured_so_far": [],
+        "resume_id": None,
     }
     state = _invoke_graph(state)
 
@@ -176,7 +177,9 @@ def confirm_resume_builder(run_id: int, body: ConfirmRequest, db: Session = Depe
             parent_resume_id=base_resume_id,
         )
         db.add(resume)
+        db.flush()
         state["status"] = "FINALIZED"
+        state["resume_id"] = resume.id
         _persist(run, state, db)
         db.refresh(resume)
         return _response(run, state, resume_id=resume.id)

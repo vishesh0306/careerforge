@@ -10,6 +10,7 @@ from app.api.ats import router as ats_router
 from app.api.autofill import router as autofill_router
 from app.api.interview_prep import router as interview_prep_router
 from app.api.jobs import router as jobs_router
+from app.api.pipeline import router as pipeline_router
 from app.api.resume_builder import router as resume_builder_router
 from app.api.resumes import router as resumes_router
 from app.api.tailoring import router as tailoring_router
@@ -34,6 +35,7 @@ app.include_router(tailoring_router, prefix="/tailoring", tags=["tailoring"])
 app.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
 app.include_router(interview_prep_router, prefix="/interview-prep", tags=["interview-prep"])
 app.include_router(autofill_router, prefix="/autofill", tags=["autofill"])
+app.include_router(pipeline_router, prefix="/pipeline", tags=["pipeline"])
 
 
 @app.get("/health")

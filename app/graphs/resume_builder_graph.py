@@ -25,6 +25,7 @@ class BuilderState(TypedDict):
     base_resume_id: Optional[int]
     emphasis_focus: Optional[str]
     captured_so_far: list[str]
+    resume_id: Optional[int]
 
 
 class AssessmentResult(BaseModel):
